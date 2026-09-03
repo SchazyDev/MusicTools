@@ -126,7 +126,7 @@ class DownloadTab(QWidget):
     def on_url_changed(self, text):
         self.preview_container.setVisible(False)
         self.available_heights = []
-        self._current_preview_url = text
+        self._current_preview_url = text.strip()
         self.preview_timer.start(500)
 
 
@@ -134,7 +134,9 @@ class DownloadTab(QWidget):
         url = self.url_edit.text().strip()
         if not url:
             return
-        
+
+        self._current_preview_url = url
+
         if self.preview_thread and self.preview_thread.isRunning():
             self.preview_thread.quit()
             self.preview_thread.wait(500)
@@ -147,6 +149,7 @@ class DownloadTab(QWidget):
 
     def on_preview_ready(self, title, thumbnail_url, heights):
         self._full_title = title
+        self._current_preview_url = self.url_edit.text().strip()
         self.preview_container.setVisible(True)
         self.available_heights = heights
 
@@ -165,12 +168,11 @@ class DownloadTab(QWidget):
             reply.deleteLater()
             return
 
-        requested_url = reply.url().toString()
         current_url = self.url_edit.text().strip()
-
-        if requested_url != current_url:
-            reply.deleteLater()
-            return
+        if (not current_url
+            or current_url != self._current_preview_url):
+                reply.deleteLater()
+                return
 
         data = reply.readAll()
         if not data.isEmpty():

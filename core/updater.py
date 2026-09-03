@@ -15,10 +15,10 @@ def check_for_updates():
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         with urllib.request.urlopen(url, timeout=5) as response:
             data = json.loads(response.read().decode())
-            tag = data.get('tag_name', '')
+            release_name = data.get('name', '')
 
-            if tag.startswith('v'):
-                tag = tag[1:]
+            if release_name.startswith('v'):
+                release_name = release_name[1:]
 
             assets = data.get('assets', [])
             download_url = None
@@ -33,8 +33,8 @@ def check_for_updates():
             if not download_url:
                 download_url = data.get('html_url', '')
 
-            if tag and download_url and tag > VERSION:
-                return tag, download_url
+            if release_name and download_url and release_name > VERSION:
+                return release_name, download_url
             
     except Exception as e:
         logger.warning(f"GitHub update check failed: {e}")
