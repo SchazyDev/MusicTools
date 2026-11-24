@@ -1,3 +1,5 @@
+from typing import List, Tuple
+
 from PyQt5.QtWidgets import (
     QMainWindow,    QTabWidget,
     QWidget,        QVBoxLayout,
@@ -16,13 +18,13 @@ from PyQt5.QtGui import (
 
 from PyQt5.QtNetwork import QNetworkAccessManager
 
-from ui.download_tab import DownloadTab
-from ui.convert_tab import ConvertTab
-from ui.about_tab import AboutTab
+from core.tools.base import ToolDescriptor
+from core.tools.registry import ToolRegistry
+from ui.tool_setup import build_tabs, register_default_tools
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, tool_registry: ToolRegistry = None):
         super().__init__()
         self.setWindowTitle("Music Tools")
         self.setFixedSize(500, 600)
@@ -65,22 +67,44 @@ class MainWindow(QMainWindow):
         self.tabs.setObjectName("tabs")
         layout.addWidget(self.tabs)
 
-        self.download_tab = DownloadTab(self)
-        self.tabs.addTab(self.download_tab, "Download")
+        self.download_tab = None
+        self.convert_tab = None
+        self.about_tab = None
 
-        self.convert_tab = ConvertTab(self)
-        self.tabs.addTab(self.convert_tab, "Convert")
-
-        self.about_tab = AboutTab()
-        self.tabs.addTab(self.about_tab, "About")
-
+        # Shared services must exist before the tabs are built: the tab widgets
+        # receive this window and may query it during their own construction.
         self.network_manager = QNetworkAccessManager()
-        self.network_manager.finished.connect(self.download_tab.on_thumbnail_downloaded)
+
+        if tool_registry is None:
+            tool_registry = ToolRegistry()
+
+        self.tool_registry = register_default_tools(tool_registry, self)
+
+        self.tab_widgets: List[Tuple[ToolDescriptor, QWidget]] = []
+        self._build_tabs_from_registry()
+
+        if self.download_tab is not None:
+            self.network_manager.finished.connect(self.download_tab.on_thumbnail_downloaded)
 
         self.dragging = False
         self.drag_position = QPoint()
 
         self.setWindowOpacity(0)
+
+
+    def _build_tabs_from_registry(self):
+        for descriptor, widget in build_tabs(self.tool_registry):
+            self.tab_widgets.append((descriptor, widget))
+            self.tabs.addTab(widget, descriptor.title)
+
+            if descriptor.id == "download":
+                self.download_tab = widget
+
+            elif descriptor.id == "convert":
+                self.convert_tab = widget
+
+            elif descriptor.id == "about":
+                self.about_tab = widget
 
 
     def mousePressEvent(self, event: QMouseEvent):

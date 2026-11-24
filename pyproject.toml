@@ -1,0 +1,36 @@
+# Project metadata and tool configuration for Music Tools.
+# There is deliberately no [build-system] section: the app is not pip-installed,
+# it ships as a PyInstaller onefile bundle (see main.spec).
+
+[project]
+name = "music-tools"
+version = "1.0.0"
+description = "Desktop downloader and audio converter for Windows built with PyQt5"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "GPL-3.0-only"
+authors = [{ name = "SchazyDev" }]
+dependencies = [
+    "PyQt5==5.15.11",
+    "yt-dlp==2026.8.19",
+    "packaging==26.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/SchazyDev/MusicTools"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py313"]

@@ -1,0 +1,5 @@
+# Runtime pip dependencies for Music Tools, pinned to the versions the app is tested with.
+# ffmpeg is NOT a pip package: ffmpeg.exe (142 MB) is a bundled binary tracked via Git LFS.
+PyQt5==5.15.11
+yt-dlp==2026.8.19
+packaging==26.3
