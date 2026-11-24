@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -20,6 +21,110 @@ logger = setup_logger(__name__)
 # Платформенный ключ, используемый в latest.json.
 PLATFORM_KEY = "windows-x86_64"
 MANIFEST_ASSET_NAME = "latest.json"
+
+# Отдельный модуль настроек не зависит от Qt и от этого файла,
+# поэтому циклический импорт невозможен.
+from core.settings import allowed_channels  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Подпись манифеста (Ed25519)
+#
+# Канонические байты подписываемого payload — это манифест (JSON-объект)
+# БЕЗ ключа "signature", повторно сериализованный строго так:
+#
+#     json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+#
+# Скрипт подписи scripts/make_manifest.py и проверка ниже обязаны
+# использовать ровно эту канонизацию — иначе подпись не сойдётся.
+# ---------------------------------------------------------------------------
+
+# Открытый ключ подписи релизных манифестов (Ed25519, base64).
+#
+# TODO(maintainer): заменить плейсхолдер на реальный ключ, который печатает
+# scripts/gen_keys.py, ДО первого подписанного релиза. Пока здесь плейсхолдер,
+# проверка подписи для канала "stable" работает fail-closed: обновление
+# не предлагается, пока не задан реальный ключ или не выставлен ALLOW_UNSIGNED.
+PUBLIC_KEY = "PLACEHOLDER_REPLACE_ME"
+
+# Явный аварийный обход проверки подписи. Тесты monkeypatch-ят этот флаг.
+# В продакшене должен оставаться False.
+ALLOW_UNSIGNED = False
+
+_PLACEHOLDER_KEYS = {"", "PLACEHOLDER_REPLACE_ME"}
+
+
+def canonical_manifest_bytes(manifest: dict) -> bytes:
+    """Канонические байты подписи: манифест без "signature".
+
+    Одна и та же функция используется и при подписи, и при проверке,
+    поэтому расхождение канонизации исключено.
+    """
+    payload = {k: v for k, v in manifest.items() if k != "signature"}
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _has_usable_key(public_key: str) -> bool:
+    """Ключ задан и не является плейсхолдером."""
+    return isinstance(public_key, str) and public_key.strip() not in _PLACEHOLDER_KEYS
+
+
+def verify_manifest_signature(manifest_bytes: bytes, signature: dict, public_key: str) -> bool:
+    """Проверить Ed25519-подпись манифеста. Никогда не бросает исключение.
+
+    "signature" — объект манифеста с полями algorithm/key_id/value, где value —
+    base64-подпись над manifest_bytes. Возвращает True только при корректной
+    подписи допустимым ключом.
+    """
+    try:
+        if not isinstance(manifest_bytes, (bytes, bytearray)):
+            return False
+        if not isinstance(signature, dict):
+            return False
+        if not _has_usable_key(public_key):
+            return False
+
+        algorithm = signature.get("algorithm")
+        if algorithm != "ed25519":
+            # Поддерживаем только Ed25519; minisign-стиль отклоняем явно.
+            if algorithm == "minisign":
+                logger.error(
+                    "Подпись minisign больше не поддерживается, требуется ed25519"
+                )
+            return False
+
+        value = signature.get("value")
+        if not isinstance(value, str) or not value:
+            return False
+
+        try:
+            sig_bytes = base64.b64decode(value, validate=True)
+        except (ValueError, Exception):
+            return False
+
+        try:
+            key_bytes = base64.b64decode(public_key, validate=True)
+        except (ValueError, Exception):
+            return False
+
+        if len(sig_bytes) != 64 or len(key_bytes) != 32:
+            return False
+
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        try:
+            pub = Ed25519PublicKey.from_public_bytes(key_bytes)
+            pub.verify(sig_bytes, bytes(manifest_bytes))
+        except InvalidSignature:
+            return False
+
+        return True
+
+    except Exception as e:  # noqa: BLE001
+        logger.error("Ошибка проверки подписи манифеста: %s", e)
+        return False
 
 USER_AGENT = "MusicTools-Updater"
 API_TIMEOUT = 8
@@ -89,11 +194,20 @@ def _request_json(url: str, timeout: int) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_latest_manifest(repo: str = GITHUB_REPO, timeout: int = API_TIMEOUT) -> Optional[UpdateInfo]:
+def fetch_latest_manifest(
+    repo: str = GITHUB_REPO,
+    timeout: int = API_TIMEOUT,
+    channel: str = "stable",
+) -> Optional[UpdateInfo]:
     """Получить UpdateInfo из ассета latest.json последнего релиза.
 
     Единственный источник URL/хэша/размера — latest.json. Если ассета нет,
     вернуть None (релиз не является автообновляемым).
+
+    Порядок доверия: сначала ПОДПИСЬ над каноническими байтами манифеста,
+    и только затем url/sha256/size. Подпись проверяется для channel=="stable"
+    в режиме fail-closed, если PUBLIC_KEY — плейсхолдер и ALLOW_UNSIGNED=False.
+    Манифест другого канала отклоняется (stable-пользователь не получает beta).
     """
     release = _request_json(
         f"https://api.github.com/repos/{repo}/releases/latest",
@@ -118,9 +232,49 @@ def fetch_latest_manifest(repo: str = GITHUB_REPO, timeout: int = API_TIMEOUT) -
 
     manifest = _request_json(manifest_url, timeout)
 
+    if not isinstance(manifest, dict):
+        logger.error("Манифест обновления: ожидался JSON-объект")
+        return None
+
+    # --- Проверка подписи ДО доверия url/sha256/size ---
+    signature = manifest.get("signature")
+    if isinstance(signature, dict):
+        manifest_bytes = canonical_manifest_bytes(manifest)
+        if not verify_manifest_signature(manifest_bytes, signature, PUBLIC_KEY):
+            logger.error(
+                "Манифест обновления: подпись недействительна — обновление отклонено"
+            )
+            return None
+        logger.info("Манифест обновления: подпись проверена")
+    else:
+        # Нет подписи.
+        # Пока PUBLIC_KEY — плейсхолдер, проверять нечего: подписанные релизы
+        # ещё не выпускаются, и мы не блокируем существующие установки.
+        # Как только задан реальный ключ, канал stable работает fail-closed.
+        if channel == "stable" and not ALLOW_UNSIGNED and _has_usable_key(PUBLIC_KEY):
+            logger.error(
+                "Манифест обновления без подписи: канал stable fail-closed, "
+                "обновление не будет предложено"
+            )
+            return None
+        if not ALLOW_UNSIGNED:
+            logger.warning(
+                "Манифест обновления без подписи (канал %s, клиент не подписан) — пропуск",
+                channel,
+            )
+
     version = manifest.get("version")
     if not parse_version(version):
         logger.warning("Манифест обновления: некорректная версия %r", version)
+        return None
+
+    manifest_channel = manifest.get("channel")
+    if manifest_channel is not None and str(manifest_channel) != channel:
+        logger.warning(
+            "Манифест обновления: канал %r не совпадает с запрошенным %r",
+            manifest_channel,
+            channel,
+        )
         return None
 
     platform = (manifest.get("platforms") or {}).get(PLATFORM_KEY)
@@ -150,17 +304,17 @@ def fetch_latest_manifest(repo: str = GITHUB_REPO, timeout: int = API_TIMEOUT) -
         sha256=sha256.lower(),
         size=size,
         notes=str(manifest.get("notes", "")),
-        channel=str(manifest.get("channel", "stable")),
+        channel=str(manifest_channel if manifest_channel is not None else channel),
     )
 
 
-def check_for_updates(repo: str = GITHUB_REPO) -> Optional[UpdateInfo]:
+def check_for_updates(repo: str = GITHUB_REPO, channel: str = "stable") -> Optional[UpdateInfo]:
     """Вернуть UpdateInfo, если доступна более новая версия, иначе None.
 
     Все сетевые и parse-ошибки логируются и проглатываются.
     """
     try:
-        info = fetch_latest_manifest(repo)
+        info = fetch_latest_manifest(repo, channel=channel)
         if info is None:
             return None
 

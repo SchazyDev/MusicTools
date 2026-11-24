@@ -62,6 +62,21 @@ iscc installer.iss
 `OutputDir` файла `installer.iss`. Версия в `installer.iss` должна совпадать с
 версией из `utils/constants.py` и `pyproject.toml`.
 
+## Подпись манифеста обновления
+
+Манифест `latest.json` подписывается ключом Ed25519 (пакет `cryptography`).
+Проверка подписи работает fail-closed для канала `stable`: пока в
+`core/updater.py` стоит плейсхолдер `PUBLIC_KEY`, неподписанный или
+непроверяемый манифест не будет предложен пользователям.
+
+- `python scripts/gen_keys.py --out-dir keys` — генерация пары ключей
+  (`keys/private.key` и `keys/public.key`), печатает строку `PUBLIC_KEY`
+  для вставки в `core/updater.py`. Приватный ключ храните в секретах CI.
+- `python scripts/make_manifest.py --key keys/private.key ...` — подписать
+  манифест; `--verify latest.json --public-key keys/public.key` — проверить.
+
+Полный порядок выпуска с подписью описан в `docs/RELEASE.md`.
+
 ## Тесты
 
 ```powershell
