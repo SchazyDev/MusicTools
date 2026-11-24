@@ -2,10 +2,9 @@ import sys
 import subprocess
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import (
     QFontDatabase, QFont,
-    QIcon, QDesktopServices
+    QIcon
 )
 
 from ui.tray_application import TrayApplication
@@ -69,17 +68,18 @@ if __name__ == "__main__":
             "Please place ffmpeg.exe in the application folder or add it to PATH.")
 
     try:
-        latest_ver, download_url = check_for_updates()
-        if latest_ver:
-            msg = f"New version released: v{latest_ver}\nUpdate?"
+        update_info = check_for_updates()
+        if update_info:
+            msg = f"New version released: v{update_info.version}\nUpdate?"
             if CustomMessageBox.question(None, "New version!", msg):
-                if perform_update(download_url, sys.executable):
+                ok, message = perform_update(update_info, sys.executable)
+                if ok:
                     app.quit()
                     sys.exit(0)
 
                 else:
-                    CustomMessageBox.critical(None, "Error", "Update failed. Try manually.")
-                    
+                    CustomMessageBox.critical(None, "Error", message)
+
     except Exception as e:
         logger.warning(f"Update check failed: {e}")
 

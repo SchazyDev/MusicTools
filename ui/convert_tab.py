@@ -14,6 +14,7 @@ from core.converter import ConvertThread
 from ui.file_drop_list import FileDropList
 from ui.animated_progress_bar import AnimatedProgressBar
 from ui.custom_message_box import CustomMessageBox
+from utils.constants import ALLOWED_EXTENSIONS
 
 
 class ConvertTab(QWidget):
@@ -31,6 +32,7 @@ class ConvertTab(QWidget):
         
         self.files_list = FileDropList()
         self.files_list.empty_clicked.connect(self.add_files_dialog)
+        self.files_list.drop_rejected.connect(self.on_files_drop_rejected)
         layout.addWidget(self.files_list)
 
         clear_btn = QPushButton("Clear")
@@ -75,6 +77,18 @@ class ConvertTab(QWidget):
         self.convert_progress = AnimatedProgressBar()
         layout.addWidget(self.convert_progress)
 
+
+    def on_files_drop_rejected(self, rejected_names):
+        unsupported = all(
+            not name.lower().endswith(tuple(ALLOWED_EXTENSIONS))
+            for name in rejected_names
+        )
+        if unsupported:
+            message = "Файлы не добавлены: неподдерживаемый формат."
+        else:
+            message = "Файлы не добавлены."
+
+        CustomMessageBox.information(self, "Warning", message)
 
     def update_convert_quality_options(self, format_type):
         self.convert_quality_combo.clear()

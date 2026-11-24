@@ -21,6 +21,11 @@ from utils.constants import (
 
 logger = setup_logger(__name__)
 
+# ВНИМАНИЕ: имя значения (ValueName) в реестре для автозапуска берётся из
+# единого источника APP_NAME (utils/constants.py) и ДОЛЖНО совпадать с
+# ValueName в секции [Registry] файла installer.iss, иначе появятся два
+# конкурирующих автозапуска. Значение пишется в кавычках: '"<sys.executable>"'.
+
 
 class TrayApplication:
     def __init__(self, app):
@@ -72,16 +77,15 @@ class TrayApplication:
             return
 
         try:
-            key = winreg.OpenKey(
+            key = winreg.CreateKeyEx(
                 winreg.HKEY_CURRENT_USER,
                 STARTUP_REG_KEY,
                 0,
                 winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
             )
 
-            app_path = sys.executable
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{app_path}"')
-            key.Close()
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{sys.executable}"')
+            winreg.CloseKey(key)
 
         except Exception as e:
             logger.error(f"Failed to add to startup: {e}")
@@ -97,10 +101,14 @@ class TrayApplication:
             )
             
             winreg.QueryValueEx(key, APP_NAME)
-            key.Close()
+            winreg.CloseKey(key)
             return True
         
         except FileNotFoundError:
+            return False
+
+        except OSError as e:
+            logger.error(f"Failed to read startup state: {e}")
             return False
 
 
@@ -124,7 +132,7 @@ class TrayApplication:
             )
 
             winreg.DeleteValue(key, APP_NAME)
-            key.Close()
+            winreg.CloseKey(key)
 
         except Exception as e:
             logger.error(f"Failed to remove from startup: {e}")

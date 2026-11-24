@@ -2,7 +2,11 @@ import os
 import sys
 import shutil
 
-APP_NAME = "Fauna Tools"
+# ВНИМАНИЕ: APP_NAME используется как отображаемое имя приложения И как имя
+# значения (ValueName) в реестре автозапуска. Оно ДОЛЖНО совпадать с ValueName
+# в [Registry] файла installer.iss, иначе появятся два конфликтующих автозапуска.
+# Это только бренд/отображаемый текст: не пути, не имена файлов, не логи, не endpoint'ы.
+APP_NAME = "Music Tools"
 VERSION = "1.0.0"
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
