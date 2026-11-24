@@ -20,6 +20,7 @@ from PyQt5.QtNetwork import (
 )
 
 from core.downloader import DownloadThread
+from core.file_ops import CopyWorker
 from core.preview import PreviewThread
 
 from ui.animated_progress_bar import AnimatedProgressBar
@@ -35,6 +36,8 @@ class DownloadTab(QWidget):
 
         self.download_thread = None
         self.preview_thread = None
+        self.copy_thread = None
+        self._save_temp_dir = None
 
         self._full_title = ""
         self._current_preview_url = ""
@@ -95,13 +98,15 @@ class DownloadTab(QWidget):
         layout.addLayout(format_layout)
 
         quality_layout = QHBoxLayout()
-        quality_label = QLabel("Resolution:")
+        self.quality_label = QLabel(
+            self._quality_label_for(self.format_combo.currentText())
+        )
 
         self.quality_combo = QComboBox()
         self.quality_combo.setAttribute(Qt.WA_StyledBackground)
         self.update_quality_options(self.format_combo.currentText())
 
-        quality_layout.addWidget(quality_label)
+        quality_layout.addWidget(self.quality_label)
         quality_layout.addWidget(self.quality_combo)
         layout.addLayout(quality_layout)
 
@@ -191,6 +196,9 @@ class DownloadTab(QWidget):
 
     def update_quality_options(self, format_type):
         self.quality_combo.clear()
+        if hasattr(self, 'quality_label'):
+            self.quality_label.setText(self._quality_label_for(format_type))
+
         if format_type == 'mp4':
             if self.available_heights:
                 for h in self.available_heights:
@@ -253,6 +261,18 @@ class DownloadTab(QWidget):
         if self.download_thread and self.download_thread.isRunning():
             self.download_thread.cancel()
 
+        if self.copy_thread and self.copy_thread.isRunning():
+            self.copy_thread.cancel()
+
+    def _quality_label_for(self, format_type):
+        if format_type == 'wav':
+            return "Bit depth:"
+
+        if format_type == 'mp3':
+            return "Bitrate:"
+
+        return "Resolution:"
+
 
     def on_download_finished(self, data):
         filename, temp_dir = data
@@ -266,8 +286,7 @@ class DownloadTab(QWidget):
         
         suggested_name = os.path.basename(filename)
 
-        ext = os.path.splitext(suggested_name)
-        if not ext:
+        if not os.path.splitext(suggested_name)[1]:
             if self.format_combo.currentText() == 'mp4':
                 suggested_name += '.mp4'
 
@@ -282,18 +301,45 @@ class DownloadTab(QWidget):
         )
 
         if save_path:
-            try:
-                shutil.copy2(filename, save_path)
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                CustomMessageBox.information(self, "Success", f"File saved:\n{save_path}")
+            self._save_temp_dir = temp_dir
+            self._save_path = save_path
 
-            except Exception as e:
-                CustomMessageBox.critical(self, "Error", f"Error while saving: {e}")
+            self.download_btn.setVisible(False)
+            self.cancel_download_btn.setVisible(True)
+            self.download_progress.setValue(0)
+
+            self.copy_thread = CopyWorker([filename], temp_dir)
+            self.copy_thread.set_destination_file(save_path)
+            self.copy_thread.progress.connect(self.download_progress.setValue)
+            self.copy_thread.finished_ok.connect(self.on_save_finished)
+            self.copy_thread.error.connect(self.on_save_error)
+            self.copy_thread.canceled.connect(self.on_save_canceled)
+            self.copy_thread.start()
 
         else:
             shutil.rmtree(temp_dir, ignore_errors=True)
             CustomMessageBox.information(self, "Cancelled", "Save cancelled.")
             self.download_progress.setValue(0)
+
+
+    def on_save_finished(self, written):
+        self.reset_download_buttons()
+        self.download_progress.setValue(100)
+        shutil.rmtree(self._save_temp_dir, ignore_errors=True)
+        self._save_temp_dir = None
+        CustomMessageBox.information(self, "Success", f"File saved:\n{self._save_path}")
+
+
+    def on_save_error(self, error_msg):
+        self.reset_download_buttons()
+        self.download_progress.setValue(0)
+        CustomMessageBox.critical(self, "Error", f"Error while saving: {error_msg}")
+
+
+    def on_save_canceled(self):
+        self.reset_download_buttons()
+        self.download_progress.setValue(0)
+        CustomMessageBox.information(self, "Cancelled", "Save cancelled.")
 
 
     def on_download_error(self, error_msg):

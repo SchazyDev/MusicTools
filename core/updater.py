@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from packaging.version import InvalidVersion, parse as parse_version_str
 
+from core.tools.base import ToolWorker
 from utils.constants import VERSION, GITHUB_REPO
 from utils.logger import setup_logger
 
@@ -304,3 +305,32 @@ def perform_update(
             except Exception:
                 pass
         return False, "Не удалось выполнить обновление."
+
+
+class UpdateCheckWorker(ToolWorker):
+    """Фоновая проверка обновлений без блокировки цикла событий."""
+
+    def _execute(self) -> None:
+        """Запустить check_for_updates() и отдать UpdateInfo | None."""
+        self.finished_ok.emit(check_for_updates())
+
+
+class UpdateDownloadWorker(ToolWorker):
+    """Фоновая загрузка обновления с последующей отложенной установкой."""
+
+    def __init__(self, info: UpdateInfo, current_exe_path: str) -> None:
+        super().__init__()
+        self.info = info
+        self.current_exe_path = current_exe_path
+
+    def _execute(self) -> None:
+        """Скачать обновление и отдать (ok, message)."""
+        ok, message = perform_update(
+            self.info,
+            self.current_exe_path,
+            on_progress=self._forward_progress,
+        )
+        self.finished_ok.emit((ok, message))
+
+    def _forward_progress(self, value: int) -> None:
+        self.progress.emit(int(value))

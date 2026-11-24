@@ -3,7 +3,7 @@ import tempfile
 import shutil
 import yt_dlp
 
-from core.ffmpeg_utils import convert_audio_file_with_cancel
+from core.ffmpeg_utils import convert_audio_file
 from core.tools.base import ToolWorker
 from utils.constants import (
     FFMPEG_PATH,
@@ -39,7 +39,7 @@ class DownloadThread(ToolWorker):
         ydl_opts = {
             'outtmpl': os.path.join(self.temp_dir, '%(title)s.%(ext)s'),
             'noplaylist': True,
-            'ffmpeg_location': os.path.dirname(FFMPEG_PATH),
+            'ffmpeg_location': os.path.dirname(FFMPEG_PATH) or None,
             'progress_hooks': [self._progress_hook],
         }
 
@@ -59,23 +59,23 @@ class DownloadThread(ToolWorker):
         if self.format_type in ('mp3', 'wav'):
             self.status.emit(f"Конвертация в {self.format_type}...")
 
-            converted = convert_audio_file_with_cancel(
+            outcome = convert_audio_file(
                 downloaded_file,
                 self.temp_dir,
                 self.format_type,
                 self.quality,
-                self.cancel_event
+                self.cancel_event,
+                on_progress=self.progress.emit
             )
 
-            if converted is None:
-                if self.is_cancel_requested():
-                    raise CancelException("Отменено пользователем")
+            if outcome.canceled:
+                raise CancelException("Отменено пользователем")
 
-                else:
-                    raise Exception("Ошибка конвертации аудио")
+            if outcome.error is not None:
+                raise Exception(f"Ошибка конвертации аудио: {outcome.error}")
 
             os.remove(downloaded_file)
-            final_file = converted
+            final_file = outcome.path
 
         self.finished_ok.emit((final_file, self.temp_dir))
 

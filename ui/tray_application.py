@@ -35,6 +35,8 @@ class TrayApplication:
 
         self.window = MainWindow()
 
+        self._orphaned_workers = []
+
         self.tray_icon = QSystemTrayIcon(QIcon(ICON_PATH), self.app)
         self.tray_icon.setToolTip("Music Tools")
 
@@ -187,29 +189,50 @@ class TrayApplication:
         self.app.quit()
 
 
+    def notify(self, title: str, message: str) -> None:
+        """Показать всплывающее уведомление трея."""
+        self.tray_icon.showMessage(
+            title,
+            message,
+            QSystemTrayIcon.Information,
+            5000
+        )
+
+
+    def set_progress_hint(self, text: str) -> None:
+        """Обновить подсказку трея и короткую метку действия."""
+        hint = text.strip()
+
+        if hint:
+            self.tray_icon.setToolTip(f"Music Tools — {hint}")
+            self.open_action.setText("\tDownloading...\t")
+
+        else:
+            self.tray_icon.setToolTip("Music Tools")
+            self.open_action.setText("\tOpen\t")
+
+
     def stop_all_threads(self):
-        if hasattr(self.window, 'download_tab'):
-            dt = self.window.download_tab
+        download_thread = getattr(getattr(self.window, 'download_tab', None), 'download_thread', None)
+        preview_thread = getattr(getattr(self.window, 'download_tab', None), 'preview_thread', None)
+        convert_thread = getattr(getattr(self.window, 'convert_tab', None), 'convert_thread', None)
 
-            if dt.download_thread and dt.download_thread.isRunning():
-                dt.download_thread.cancel()
+        workers = [
+            ("Download thread", download_thread),
+            ("Preview thread", preview_thread),
+            ("Convert thread", convert_thread),
+            ("Update worker", getattr(self, 'update_worker', None)),
+        ]
 
-                if not dt.download_thread.wait(3000):
-                    logger.warning("Download thread did not finish, forcing terminate")
-                    dt.download_thread.terminate()
-                    dt.download_thread.wait(500)
+        for name, worker in workers:
+            if worker is None or not worker.isRunning():
+                continue
 
-            if dt.preview_thread and dt.preview_thread.isRunning():
-                dt.preview_thread.quit()
-                dt.preview_thread.wait(1000)
+            worker.cancel()
 
-        if hasattr(self.window, 'convert_tab'):
-            ct = self.window.convert_tab
-
-            if ct.convert_thread and ct.convert_thread.isRunning():
-                ct.convert_thread.cancel()
-                
-                if not ct.convert_thread.wait(3000):
-                    logger.warning("Convert thread did not finish, forcing terminate")
-                    ct.convert_thread.terminate()
-                    ct.convert_thread.wait(500)
+            if not worker.wait(5000):
+                # Не убиваем поток принудительно: terminate() может оставить
+                # захваченные блокировки, временные файлы и битый вывод.
+                # Ссылку сохраняем, чтобы процесс завершился штатно.
+                logger.warning(f"{name} did not stop within timeout; leaving it alive")
+                self._orphaned_workers.append(worker)

@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 
 from core.converter import ConvertThread
+from core.file_ops import CopyWorker
 from ui.file_drop_list import FileDropList
 from ui.animated_progress_bar import AnimatedProgressBar
 from ui.custom_message_box import CustomMessageBox
@@ -22,6 +23,9 @@ class ConvertTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.convert_thread = None
+        self.copy_thread = None
+        self._temp_dir = None
+        self._target_dir = None
         self.setup_ui()
 
 
@@ -52,13 +56,15 @@ class ConvertTab(QWidget):
         layout.addLayout(format_layout)
 
         quality_layout = QHBoxLayout()
-        quality_label = QLabel("Resolution:")
+        self.quality_label = QLabel(
+            self._quality_label_for(self.convert_format_combo.currentText())
+        )
 
         self.convert_quality_combo = QComboBox()
         self.convert_quality_combo.setAttribute(Qt.WA_StyledBackground)
         self.update_convert_quality_options(self.convert_format_combo.currentText())
 
-        quality_layout.addWidget(quality_label)
+        quality_layout.addWidget(self.quality_label)
         quality_layout.addWidget(self.convert_quality_combo)
         layout.addLayout(quality_layout)
 
@@ -90,8 +96,17 @@ class ConvertTab(QWidget):
 
         CustomMessageBox.information(self, "Warning", message)
 
+    def _quality_label_for(self, format_type):
+        if format_type in ('wav', 'flac'):
+            return "Bit depth:"
+
+        return "Bitrate:"
+
     def update_convert_quality_options(self, format_type):
         self.convert_quality_combo.clear()
+        if hasattr(self, 'quality_label'):
+            self.quality_label.setText(self._quality_label_for(format_type))
+
         if format_type == 'mp3':
             bitrates = [
                 "320", "256",
@@ -181,29 +196,67 @@ class ConvertTab(QWidget):
         if self.convert_thread and self.convert_thread.isRunning():
             self.convert_thread.cancel()
 
+        if self.copy_thread and self.copy_thread.isRunning():
+            self.copy_thread.cancel()
+
 
     def on_convert_finished(self, temp_dir):
         self.reset_convert_buttons()
         self.convert_progress.setValue(100)
         target_dir = QFileDialog.getExistingDirectory(self, "Choose folder for files!", "")
 
-        if target_dir:
-            try:
-                for fname in os.listdir(temp_dir):
-                    src = os.path.join(temp_dir, fname)
-                    dst = os.path.join(target_dir, fname)
-                    shutil.copy2(src, dst)
-
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                CustomMessageBox.information(self, "Success", f"Files saved:\n{target_dir}")
-
-            except Exception as e:
-                CustomMessageBox.critical(self, "Error", f"Error while saving: {e}")
-
-        else:
+        if not target_dir:
             shutil.rmtree(temp_dir, ignore_errors=True)
             CustomMessageBox.information(self, "Warning", "Files not saved.")
             self.convert_progress.setValue(0)
+            return
+
+        sources = [
+            os.path.join(temp_dir, fname)
+            for fname in os.listdir(temp_dir)
+            if os.path.isfile(os.path.join(temp_dir, fname))
+        ]
+
+        self._temp_dir = temp_dir
+        self._target_dir = target_dir
+
+        self.convert_btn.setVisible(False)
+        self.cancel_convert_btn.setVisible(True)
+        self.convert_progress.setValue(0)
+
+        self.copy_thread = CopyWorker(sources, target_dir)
+        self.copy_thread.progress.connect(self.convert_progress.setValue)
+        self.copy_thread.status.connect(self._on_copy_status)
+        self.copy_thread.finished_ok.connect(self.on_copy_finished)
+        self.copy_thread.error.connect(self.on_copy_error)
+        self.copy_thread.canceled.connect(self.on_copy_canceled)
+        self.copy_thread.start()
+
+
+    def _on_copy_status(self, message):
+        status_label = getattr(self.main_window, "status_label", None)
+        if status_label is not None:
+            status_label.setText(message)
+
+
+    def on_copy_finished(self, written):
+        self.reset_convert_buttons()
+        self.convert_progress.setValue(100)
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+        self._temp_dir = None
+        CustomMessageBox.information(self, "Success", f"Files saved:\n{self._target_dir}")
+
+
+    def on_copy_error(self, error_msg):
+        self.reset_convert_buttons()
+        self.convert_progress.setValue(0)
+        CustomMessageBox.critical(self, "Error", f"Error while saving: {error_msg}")
+
+
+    def on_copy_canceled(self):
+        self.reset_convert_buttons()
+        self.convert_progress.setValue(0)
+        CustomMessageBox.information(self, "Cancelled", "Copying cancelled.")
 
 
     def on_convert_error(self, error_msg):
@@ -215,7 +268,7 @@ class ConvertTab(QWidget):
     def on_convert_canceled(self):
         self.reset_convert_buttons()
         self.convert_progress.setValue(0)
-        CustomMessageBox.information(self, "Cancelled", "Convertation cancelled.")
+        CustomMessageBox.information(self, "Cancelled", "Conversion cancelled.")
 
 
     def reset_convert_buttons(self):

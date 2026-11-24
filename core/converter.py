@@ -2,7 +2,7 @@ import os
 import tempfile
 import shutil
 
-from core.ffmpeg_utils import convert_audio_file_with_cancel
+from core.ffmpeg_utils import convert_audio_file
 from core.tools.base import ToolWorker
 from utils.constants import CancelException
 
@@ -32,24 +32,30 @@ class ConvertThread(ToolWorker):
 
             self.status.emit(f"Обработка файла {idx+1}/{total_files}: {os.path.basename(file_path)}")
 
+            def on_progress(percent, idx=idx):
+                overall = int(((idx + percent / 100) / total_files) * 100)
+                self.progress.emit(overall)
+
             try:
-                output_path = convert_audio_file_with_cancel(
+                outcome = convert_audio_file(
                     file_path,
                     self.temp_dir,
                     self.output_format,
                     self.quality,
-                    self.cancel_event
+                    self.cancel_event,
+                    on_progress=on_progress
                 )
 
-                if output_path is None:
-                    if self.is_cancel_requested():
-                        raise CancelException("Отменено пользователем")
+                if outcome.canceled:
+                    raise CancelException("Отменено пользователем")
 
-                    else:
-                        errors.append(f"Не удалось конвертировать {os.path.basename(file_path)}")
-                        continue
+                if outcome.error is not None:
+                    errors.append(
+                        f"Не удалось конвертировать {os.path.basename(file_path)}: {outcome.error}"
+                    )
+                    continue
 
-                self.status.emit(f"Сохранено: {output_path}")
+                self.status.emit(f"Сохранено: {outcome.path}")
                 overall = int((idx + 1) / total_files * 100)
                 self.progress.emit(overall)
 
