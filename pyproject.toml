@@ -4,7 +4,7 @@
 
 [project]
 name = "music-tools"
-version = "1.0.0"
+version = "1.1.0"
 description = "Desktop downloader and audio converter for Windows built with PyQt5"
 readme = "README.md"
 requires-python = ">=3.13"

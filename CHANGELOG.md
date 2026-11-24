@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
 ### Добавлено
 
 - Манифесты зависимостей: `requirements.txt` (runtime) и `requirements-dev.txt`
@@ -85,5 +87,6 @@
 - Автозапуск вместе с Windows.
 - Автообновление через GitHub Releases.
 
-[Unreleased]: https://github.com/SchazyDev/MusicTools/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/SchazyDev/MusicTools/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SchazyDev/MusicTools/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SchazyDev/MusicTools/releases/tag/v1.0.0

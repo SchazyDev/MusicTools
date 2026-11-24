@@ -20,7 +20,7 @@
 
 [Setup]
 AppName=Music Tools
-AppVersion=1.0.0
+AppVersion=1.1.0
 AppPublisher=Schazy
 AppPublisherURL=https://github.com/SchazyDev/MusicTools
 AppSupportURL=https://t.me/schazyprod
@@ -40,7 +40,7 @@ UninstallDisplayIcon={app}\MusicTools.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=dist
-OutputBaseFilename=MusicTools_v1_0_0_setup
+OutputBaseFilename=MusicTools_v1_1_0_setup
 SetupIconFile=icons\icon.ico
 WizardStyle=modern
 MinVersion=10.0
@@ -57,10 +57,21 @@ ArchitecturesInstallIn64BitMode=x64
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+russian.TaskGroup=Дополнительные задачи:
+english.TaskGroup=Additional tasks:
+russian.DesktopIconTask=Создать ярлык на рабочем столе
+english.DesktopIconTask=Create a desktop shortcut
+russian.StartupTask=Запускать при старте Windows
+english.StartupTask=Start Windows automatically
+russian.LaunchApp=Запустить Music Tools
+english.LaunchApp=Launch Music Tools
 
 [Tasks]
-Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные задачи:"; Flags: unchecked
-Name: "startup"; Description: "Запускать при старте Windows"; GroupDescription: "Дополнительные задачи:"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:DesktopIconTask}"; GroupDescription: "{cm:TaskGroup}"; Flags: unchecked
+Name: "startup"; Description: "{cm:StartupTask}"; GroupDescription: "{cm:TaskGroup}"; Flags: unchecked
 
 [Files]
 Source: "dist\main.exe"; DestDir: "{app}"; DestName: "MusicTools.exe"; Flags: ignoreversion
@@ -84,7 +95,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 ; runasoriginaluser: приложение запускается от имени исходного пользователя,
 ; а НЕ от элевированного процесса установки. Это и есть ключевое исправление
 ; для UIPI (drag-and-drop файлов начинает работать).
-Filename: "{app}\MusicTools.exe"; Description: "Запустить Music Tools"; Flags: postinstall nowait skipifsilent runasoriginaluser
+Filename: "{app}\MusicTools.exe"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\fauna_tools.log"

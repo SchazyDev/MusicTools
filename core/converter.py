@@ -3,7 +3,7 @@ import tempfile
 import shutil
 
 from core.ffmpeg_utils import convert_audio_file
-from core.tools.base import ToolWorker
+from core.tools.base import ToolError, ToolWorker
 from utils.constants import CancelException
 
 
@@ -67,7 +67,7 @@ class ConvertThread(ToolWorker):
                 continue
 
         if errors:
-            self.error.emit("Некоторые файлы не были конвертированы:\n" + "\n".join(errors))
+            raise ToolError("Некоторые файлы не были конвертированы:\n" + "\n".join(errors))
 
         else:
             self.finished_ok.emit(self.temp_dir)

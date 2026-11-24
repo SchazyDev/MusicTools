@@ -112,6 +112,9 @@ if __name__ == "__main__":
             "FFmpeg is required for conversion and audio extraction.\n"
             "Please place ffmpeg.exe in the application folder or add it to PATH.")
 
+        logger.error("FFmpeg not found or unusable; exiting.")
+        sys.exit(1)
+
     tray_app = TrayApplication(app)
 
     check_worker = UpdateCheckWorker()

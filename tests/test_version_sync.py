@@ -1,11 +1,14 @@
-"""Guards against version drift between the app, packaging and installer."""
+"""Guards against version drift between the app, packaging and installer.
+
+The expected version is derived from ``utils/constants.py`` (single source of
+truth), so a release never requires editing this test.
+"""
 
 import re
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.0.0"
 
 
 def _read(relative_path):
@@ -33,40 +36,74 @@ def _installer_version():
     return match.group(1)
 
 
-def test_constants_version_is_expected():
-    actual = _constants_version()
-    assert actual == EXPECTED_VERSION, (
-        f"utils/constants.py: VERSION is {actual!r}, expected {EXPECTED_VERSION!r}"
+def _installer_output_base():
+    match = re.search(r"^\s*OutputBaseFilename\s*=\s*(\S+)", _read("installer.iss"), re.MULTILINE)
+    assert match, "installer.iss: OutputBaseFilename line not found"
+    return match.group(1)
+
+
+def _expected_version():
+    version = _constants_version()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), (
+        f"utils/constants.py: VERSION {version!r} is not a semantic version"
     )
+    return version
 
 
-def test_pyproject_version_is_expected():
+def test_pyproject_version_matches_constants():
+    expected = _expected_version()
     actual = _pyproject_version()
-    assert actual == EXPECTED_VERSION, (
-        f"pyproject.toml: project.version is {actual!r}, expected {EXPECTED_VERSION!r}"
+    assert actual == expected, (
+        f"pyproject.toml: project.version is {actual!r}, expected {expected!r} "
+        "(from utils/constants.py VERSION)"
     )
 
 
-def test_installer_version_is_expected():
+def test_installer_version_matches_constants():
+    expected = _expected_version()
     actual = _installer_version()
-    assert actual == EXPECTED_VERSION, (
-        f"installer.iss: AppVersion is {actual!r}, expected {EXPECTED_VERSION!r}"
+    assert actual == expected, (
+        f"installer.iss: AppVersion is {actual!r}, expected {expected!r} "
+        "(from utils/constants.py VERSION)"
+    )
+
+
+def test_installer_output_base_embeds_version():
+    expected = _expected_version()
+    underscored = "_v" + expected.replace(".", "_") + "_setup"
+    actual = _installer_output_base()
+    assert underscored in actual, (
+        f"installer.iss: OutputBaseFilename is {actual!r}, expected it to embed "
+        f"{underscored!r} (from utils/constants.py VERSION)"
     )
 
 
 def test_versions_are_consistent():
+    expected = _expected_version()
     sources = {
         "utils/constants.py": _constants_version(),
         "pyproject.toml": _pyproject_version(),
         "installer.iss": _installer_version(),
     }
     mismatched = [f"{name}={version}" for name, version in sources.items()
-                  if version != EXPECTED_VERSION]
+                  if version != expected]
     assert not mismatched, (
-        f"Version drift, expected {EXPECTED_VERSION}: {', '.join(mismatched)}"
+        f"Version drift, expected {expected}: {', '.join(mismatched)}"
     )
 
 
 def test_changelog_has_release_heading():
+    expected = _expected_version()
     changelog = _read("CHANGELOG.md")
-    assert "## [1.0.0]" in changelog, "CHANGELOG.md: missing '## [1.0.0]' heading"
+    assert f"## [{expected}]" in changelog, (
+        f"CHANGELOG.md: missing '## [{expected}]' heading "
+        "(from utils/constants.py VERSION)"
+    )
+
+
+def test_test_has_no_hardcoded_version():
+    source = Path(__file__).read_text(encoding="utf-8")
+    assert not re.search(r'"[1-9]\d*\.[0-9]+\.[0-9]+"', source), (
+        "tests/test_version_sync.py: hardcoded version literal found; "
+        "derive it from utils/constants.py instead"
+    )
