@@ -157,6 +157,15 @@ fauna_tools.log
 *.part
 *.ytdl
 
+# Node / frontend (Tauri build)
+node_modules/
+.npm/
+.vite/
+
+# Rust / Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/schemas/
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
