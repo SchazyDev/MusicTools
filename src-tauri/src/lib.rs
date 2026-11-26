@@ -13,9 +13,11 @@ pub mod state;
 pub mod tools;
 pub mod tools_registry;
 pub mod tray;
+pub mod update;
 
 use std::sync::Arc;
 
+use tauri::Emitter;
 use tauri::Manager;
 
 use crate::jobs::JobRegistry;
@@ -59,6 +61,43 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
                 tray::install_close_handler(&window);
             }
 
+            // Фоновая проверка обновлений при старте: сеть не блокирует UI.
+            if app
+                .state::<AppState>()
+                .settings
+                .lock()
+                .map(|guard| guard.check_on_startup)
+                .unwrap_or(false)
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let (channel, version) = match handle.try_state::<AppState>() {
+                        Some(state) => (
+                            state
+                                .settings
+                                .lock()
+                                .map(|guard| guard.channel.clone())
+                                .unwrap_or_else(|_| crate::settings::DEFAULT_CHANNEL.to_owned()),
+                            state.version.clone(),
+                        ),
+                        None => return,
+                    };
+
+                    match crate::update::fetch_latest_manifest(crate::update::GITHUB_REPO, &channel)
+                        .await
+                    {
+                        Ok(Some(info)) => {
+                            if crate::update::is_newer(&info.version, &version) {
+                                log::info!("доступно обновление до версии {}", info.version);
+                                let _ = handle.emit(crate::update::EVENT_UPDATE, &info);
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::warn!("проверка обновлений при старте: {e}"),
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -74,6 +113,8 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             commands::save_result,
             commands::convert_start,
             commands::save_convert_result,
+            commands::check_updates,
+            commands::start_update,
             commands::hide_to_tray,
             commands::show_main_window,
             commands::open_log_file,

@@ -213,6 +213,73 @@ pub async fn save_convert_result(
 }
 
 // ---------------------------------------------------------------------------
+// Обновления
+// ---------------------------------------------------------------------------
+
+/// Проверяет обновления для выбранного канала. Сетевые ошибки — это `None`.
+#[tauri::command]
+pub async fn check_updates(
+    state: State<'_, AppState>,
+) -> IpcResult<Option<crate::update::UpdateInfo>> {
+    let channel = state
+        .settings
+        .lock()
+        .map(|guard| guard.channel.clone())
+        .unwrap_or_else(|_| crate::settings::DEFAULT_CHANNEL.to_owned());
+
+    Ok(
+        crate::update::check_for_updates(
+            crate::update::GITHUB_REPO,
+            &channel,
+            &state.version,
+        )
+        .await,
+    )
+}
+
+/// Скачивает обновление и запускает отложенную установку.
+///
+/// После успеха приложение завершается: скрипт ждёт освобождения exe,
+/// подменяет его и запускает новую версию.
+#[tauri::command]
+pub async fn start_update(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    info: crate::update::UpdateInfo,
+) -> IpcResult<u64> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("не удалось определить путь к приложению: {e}"))?;
+
+    let id = state.jobs.spawn("update", move |ctx| {
+        Box::pin(async move {
+            let mut last: u8 = 0;
+            let result = crate::update::perform_update(&info, &current_exe, |percent| {
+                if percent != last {
+                    last = percent;
+                    ctx.progress(percent);
+                }
+            })
+            .await;
+
+            match result {
+                Ok(message) => {
+                    // Даём событию `ok` дойти до интерфейса, затем выходим:
+                    // скрипт обновления ждёт освобождения exe.
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        handle.exit(0);
+                    });
+                    JobOutcome::ok(message)
+                }
+                Err(message) => JobOutcome::failed(message),
+            }
+        })
+    });
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
 // Окно и трей
 // ---------------------------------------------------------------------------
 

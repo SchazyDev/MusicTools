@@ -4,13 +4,16 @@
    * Порядок и заголовки приходят из `get_tools`, тела вкладок — из `panes.ts`.
    */
   import { onMount } from "svelte";
-  import { commands, describeError, type AppInfo, type ToolDescriptor } from "./lib/ipc";
+  import { listen } from "@tauri-apps/api/event";
+  import { commands, describeError, type AppInfo, type ToolDescriptor, type UpdateInfo } from "./lib/ipc";
   import { panes } from "./lib/panes";
-  import DemoJob from "./components/DemoJob.svelte";
+  import UpdateChecker from "./components/UpdateChecker.svelte";
 
   let tools: ToolDescriptor[] | null = $state(null);
   let info: AppInfo | null = $state(null);
   let errorMessage: string | null = $state(null);
+  let unlistenUpdates: (() => void) | null = null;
+  let startupUpdate: { version: string } | null = $state(null);
   let activeId: string | null = $state(null);
 
   async function load(): Promise<void> {
@@ -29,6 +32,19 @@
 
   onMount(() => {
     void load();
+
+    let disposed = false;
+    void listen<UpdateInfo>("update://available", (event) => {
+      startupUpdate = { version: event.payload.version };
+    }).then((unsubscribe) => {
+      if (disposed) unsubscribe();
+      else unlistenUpdates = unsubscribe;
+    });
+
+    return () => {
+      disposed = true;
+      unlistenUpdates?.();
+    };
   });
 </script>
 
@@ -73,7 +89,7 @@
     </section>
 
     <footer class="statusbar">
-      <DemoJob />
+      <UpdateChecker startupVersion={startupUpdate?.version ?? null} />
       <span class="muted">{info.os}</span>
     </footer>
   {/if}

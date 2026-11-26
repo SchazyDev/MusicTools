@@ -103,6 +103,20 @@ export interface ConvertParams {
 }
 
 // ---------------------------------------------------------------------------
+// Обновления (`src-tauri/src/update/mod.rs`)
+// ---------------------------------------------------------------------------
+
+/** `UpdateInfo`: описание доступного обновления из `latest.json`. */
+export interface UpdateInfo {
+  version: string;
+  url: string;
+  sha256: string;
+  size: number;
+  notes: string;
+  channel: string;
+}
+
+// ---------------------------------------------------------------------------
 // Команды (имена совпадают с generate_handler! в lib.rs)
 // ---------------------------------------------------------------------------
 
@@ -115,7 +129,6 @@ export const commands = {
   updateSettings: (patch: Partial<Settings>): Promise<Settings> =>
     invoke<Settings>("update_settings", { patch }),
   /** Возвращает job_id немедленно; события приходят в `job://event`. */
-  startDemoJob: (steps = 20): Promise<number> => invoke<number>("start_demo_job", { steps }),
   cancelJob: (jobId: number): Promise<boolean> => invoke<boolean>("cancel_job", { jobId }),
   listJobs: (): Promise<JobSnapshot[]> => invoke<JobSnapshot[]>("list_jobs"),
   hideToTray: (): Promise<void> => invoke<void>("hide_to_tray"),
@@ -136,6 +149,10 @@ export const commands = {
   /** Копирует готовые файлы в папку, возвращает job_id. */
   saveConvertResult: (sourceDir: string, destinationDir: string): Promise<number> =>
     invoke<number>("save_convert_result", { sourceDir, destinationDir }),
+  /** Проверяет обновления; `null` — новой версии нет или сеть недоступна. */
+  checkUpdates: (): Promise<UpdateInfo | null> => invoke<UpdateInfo | null>("check_updates"),
+  /** Скачивает обновление и запускает перезапуск, возвращает job_id. */
+  startUpdate: (info: UpdateInfo): Promise<number> => invoke<number>("start_update", { info }),
 } as const;
 
 // ---------------------------------------------------------------------------
