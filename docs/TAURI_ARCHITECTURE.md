@@ -286,12 +286,13 @@ pub struct ToolDescriptor {
 | `hide_to_tray` | — | — | скрыть окно |
 | `show_main_window` | — | — | показать окно из трея |
 | `open_log_file` | — | — | открыть журнал в проводнике |
+| `download_preview` | `url: string` | `PreviewInfo` | заголовок, миниатюра, доступные высоты |
+| `download_start` | `params: DownloadParams` | `number` | запуск скачивания, возвращает `job_id` |
+| `save_result` | `sourcePath`, `destinationPath` | `number` | копирование результата с защитой от перезаписи |
 
 Команды фазы 1 и 2 (повторяют Python-код и появятся со своими заданиями):
-`probe_url` (заголовок, миниатюра, доступные разрешения), `start_download`,
-`start_convert`, `pick_files`, `pick_folder`, `pick_save_path`,
-`list_input_files`. Все они возвращают либо данные, либо `job_id`,
-подчиняясь тем же соглашениям.
+`start_convert`, `pick_files`, `pick_folder`, `list_input_files`. Все они
+возвращают либо данные, либо `job_id`, подчиняясь тем же соглашениям.
 
 Событие `job://event` — единственный канал заданий:
 
@@ -299,7 +300,7 @@ pub struct ToolDescriptor {
 type JobEventEnvelope =
   | { job_id: number; kind: string; state: "progress"; percent: number; file?: string }
   | { job_id: number; kind: string; state: "status"; message: string }
-  | { job_id: number; kind: string; state: "ok"; message: string }
+  | { job_id: number; kind: string; state: "ok"; message: string; path?: string }
   | { job_id: number; kind: string; state: "canceled" }
   | { job_id: number; kind: string; state: "failed"; message: string };
 ```
@@ -322,27 +323,34 @@ type JobEventEnvelope =
 
 Какие бинарники поставляются в `src-tauri/resources`: `yt-dlp.exe`,
 `ffmpeg.exe` (и `ffprobe.exe`, если понадобится для точной длительности),
-позже — обёртка Demucs и её python-runtime. Путь поиска один и тот же в
-dev и в релизе, разница скрыта в `resolve_resources_dir`:
+позже — обёртка Demucs и её python-runtime. Порядок поиска реализован в
+`tools::sidecar::resolve_with`:
 
-* dev — `src-tauri/resources` (манифест `CARGO_MANIFEST_DIR`);
-* релиз — каталог ресурсов установки (`app.path().resource_dir()`).
+1. каталог ресурсов (dev — `src-tauri/resources`, релиз —
+   `app.path().resource_dir()`);
+2. каталог исполняемого файла (рядом с `music-tools.exe`);
+3. каталоги из `PATH`;
+4. только в отладочной сборке: `python -m yt_dlp` и `ffmpeg.exe` в корне
+   репозитория.
+
+`ResolvedSidecar::describe()` записывает в журнал, какой источник сработал,
+поэтому проблему «не нашлась программа» видно из `fauna_tools.log` без
+догадок.
 
 Обёртка `tools/sidecar` гарантирует три вещи. Первое: дочерний процесс
-запускается через `tokio::process::Command` и всегда убивается на отмене,
-при ошибке и при выходе приложения — общий флаг завершения в `AppState`
-плюс задача, которая по токену отмены вызывает kill всего дерева процессов
-(на Windows — `taskkill /T`, на Unix — kill по группе). Второе: stderr
-читается полностью и попадает в журнал, а последние строки — в текст
-ошибки пользователю. Третье: stdout читается построчно, прогресс
-парсится из строк вида `[download]  42.1% of ...` у yt-dlp и
-`frame= 120 fps=...` у ffmpeg, и передаётся через `JobContext::progress`
-в throttled-режиме (не чаще десяти раз в секунду).
+запускается через `tokio::process::Command` без окна консоли
+(`CREATE_NO_WINDOW`) и убивается на отмене вместе со всем деревом процессов
+(`taskkill /T /F /PID` на Windows). Второе: stderr читается полностью,
+последние строки хранятся в кольцевом буфере и попадают в текст ошибки
+пользователю. Третье: stdout читается построчно; прогресс yt-dlp берётся из
+машиночитаемого `--progress-template`, прогресс ffmpeg — из
+`-progress pipe:1` (`out_time_us` против `Duration:` из stderr), значения
+ограничены 0..99, сто процентов отправляются только после успешного выхода.
 
-Обновление `yt-dlp` — отдельный вопрос. Он ломается чаще всего, когда
+Обновление `yt-dlp` — отдельный вопрос (план). Он ломается чаще всего, когда
 сайты меняют разметку, поэтому самообновление через сам бинарник
 (`yt-dlp -U`) не подходит: файл лежит в ресурсах установки, а запись
-в неё требует прав администратора. Выбирается следующий порядок поиска:
+в неё требует прав администратора. Планируемый порядок поиска:
 
 1. `%LOCALAPPDATA%\MusicTools\bin\yt-dlp.exe` — обновляемая копия;
 2. `resources\yt-dlp.exe` — закреплённый бинарник из установщика;

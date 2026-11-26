@@ -45,6 +45,7 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let resources_dir = resolve_resources_dir(app);
             log::info!("каталог ресурсов: {}", resources_dir.display());
@@ -68,6 +69,9 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             commands::start_demo_job,
             commands::cancel_job,
             commands::list_jobs,
+            commands::download_preview,
+            commands::download_start,
+            commands::save_result,
             commands::hide_to_tray,
             commands::show_main_window,
             commands::open_log_file,

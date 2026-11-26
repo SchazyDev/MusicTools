@@ -11,6 +11,7 @@
     "core:window:allow-close",
     "core:event:default",
     "core:app:allow-version",
-    "core:app:allow-name"
+    "core:app:allow-name",
+    "dialog:allow-save"
   ]
 }

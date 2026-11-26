@@ -154,6 +154,7 @@ cython_debug/
 # Music Tools project files
 # main.spec is versioned on purpose, so no *.spec rule here.
 fauna_tools.log
+music_tools.log
 *.part
 *.ytdl
 

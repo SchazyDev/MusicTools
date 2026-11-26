@@ -123,6 +123,58 @@ pub async fn list_jobs(state: State<'_, AppState>) -> IpcResult<Vec<JobSnapshot>
 }
 
 // ---------------------------------------------------------------------------
+// Скачивание
+// ---------------------------------------------------------------------------
+
+/// Предпросмотр ссылки: заголовок, миниатюра, доступные разрешения.
+///
+/// Выполняется синхронно для UI (до 30 секунд), поэтому вызывается только
+/// после паузы ввода и с индикатором загрузки на стороне фронтенда.
+#[tauri::command]
+pub async fn download_preview(url: String) -> IpcResult<crate::tools::download::PreviewInfo> {
+    crate::tools::download::preview(&url).await.map_err(|e| e.to_string())
+}
+
+/// Запускает скачивание и сразу возвращает `job_id`.
+#[tauri::command]
+pub async fn download_start(
+    state: State<'_, AppState>,
+    params: crate::tools::download::DownloadParams,
+) -> IpcResult<u64> {
+    let id = state.jobs.spawn("download", move |ctx| {
+        Box::pin(async move { crate::tools::download::run_job(&ctx, params).await })
+    });
+    Ok(id)
+}
+
+/// Копирует готовый файл в выбранное пользователем место.
+///
+/// `source_path` берётся из поля `path` события `ok`; коллизии решаются
+/// добавлением ` (1)` к имени. Прогресс идёт событиями нового задания.
+#[tauri::command]
+pub async fn save_result(
+    state: State<'_, AppState>,
+    source_path: String,
+    destination_path: String,
+) -> IpcResult<u64> {
+    let source = std::path::PathBuf::from(source_path);
+    let id = state.jobs.spawn("save", move |ctx| {
+        Box::pin(async move {
+            let job_id = ctx.job_id();
+            match crate::tools::download::save_result(&ctx, job_id, &source, &destination_path).await
+            {
+                Ok(path) => {
+                    JobOutcome::ok_with_path(format!("Файл сохранён: {path}"), path)
+                }
+                Err(JobError::Cancelled) => JobOutcome::Canceled,
+                Err(JobError::Failed(message)) => JobOutcome::failed(message),
+            }
+        })
+    });
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
 // Окно и трей
 // ---------------------------------------------------------------------------
 

@@ -25,7 +25,12 @@ pub type Percent = u8;
 #[serde(rename_all = "snake_case")]
 pub enum JobOutcome {
     /// Успех; `message` — краткий статус пользователю на русском.
-    Ok { message: String },
+    /// `path` — путь готового файла, если задание его создало.
+    Ok {
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
     /// Отменено пользователем.
     Canceled,
     /// Ошибка; `message` уже локализована под RU.
@@ -34,7 +39,12 @@ pub enum JobOutcome {
 
 impl JobOutcome {
     pub fn ok(message: impl Into<String>) -> Self {
-        Self::Ok { message: message.into() }
+        Self::Ok { message: message.into(), path: None }
+    }
+
+    /// Успех с путём результата: UI предлагает сохранить файл.
+    pub fn ok_with_path(message: impl Into<String>, path: impl Into<String>) -> Self {
+        Self::Ok { message: message.into(), path: Some(path.into()) }
     }
 
     pub fn failed(message: impl Into<String>) -> Self {
@@ -95,6 +105,8 @@ pub enum JobEvent {
     #[serde(rename = "ok")]
     Ok {
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
     Canceled,
     Failed {
@@ -105,7 +117,7 @@ pub enum JobEvent {
 impl JobEvent {
     fn terminal(outcome: JobOutcome) -> Self {
         match outcome {
-            JobOutcome::Ok { message } => Self::Ok { message },
+            JobOutcome::Ok { message, path } => Self::Ok { message, path },
             JobOutcome::Canceled => Self::Canceled,
             JobOutcome::Failed { message } => Self::Failed { message },
         }
