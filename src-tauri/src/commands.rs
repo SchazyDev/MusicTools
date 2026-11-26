@@ -280,6 +280,45 @@ pub async fn start_update(
 }
 
 // ---------------------------------------------------------------------------
+// Обновление yt-dlp
+// ---------------------------------------------------------------------------
+
+/// Найденные программы (`yt-dlp`, `ffmpeg`): путь и источник.
+#[tauri::command]
+pub async fn sidecars_status() -> IpcResult<Vec<crate::tools::sidecar::SidecarStatus>> {
+    Ok(crate::tools::sidecar::all_statuses())
+}
+
+/// Текущая и доступная версия yt-dlp. Без сети возвращает локальные данные.
+#[tauri::command]
+pub async fn ytdlp_status() -> IpcResult<crate::tools::ytdlp_update::YtDlpStatus> {
+    Ok(crate::tools::ytdlp_update::status().await)
+}
+
+/// Скачивает последний yt-dlp в профиль пользователя с проверкой SHA-256.
+#[tauri::command]
+pub async fn ytdlp_update(state: State<'_, AppState>) -> IpcResult<u64> {
+    let id = state.jobs.spawn("ytdlp_update", move |ctx| {
+        Box::pin(async move {
+            let last = std::sync::atomic::AtomicU8::new(255);
+            match crate::tools::ytdlp_update::update(&ctx, |percent| {
+                let prev = last.swap(percent, std::sync::atomic::Ordering::Relaxed);
+                if prev != percent {
+                    ctx.progress(percent);
+                }
+            })
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(JobError::Cancelled) => JobOutcome::Canceled,
+                Err(JobError::Failed(message)) => JobOutcome::failed(message),
+            }
+        })
+    });
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
 // Окно и трей
 // ---------------------------------------------------------------------------
 
@@ -309,5 +348,37 @@ pub async fn open_log_file(state: State<'_, AppState>) -> IpcResult<()> {
     #[cfg(not(windows))]
     {
         Err(format!("открытие файла поддерживается только в Windows: {}", path.display()))
+    }
+}
+
+/// Открывает ссылку в браузере по умолчанию.
+///
+/// Разрешены только `http` и `https`: команда не должна становиться способом
+/// запустить произвольную программу из интерфейса.
+#[tauri::command]
+pub async fn open_url(url: String) -> IpcResult<()> {
+    let trimmed = url.trim();
+    let allowed = trimmed.starts_with("https://") || trimmed.starts_with("http://");
+    if !allowed {
+        return Err("открывать можно только ссылки http и https".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        // `cmd /c start` разбирает и `&` в URL, поэтому первый аргумент после
+        // `start` — пустая строка: она задаёт заголовок окна и защищает URL.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", trimmed])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("не удалось открыть ссылку: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("не удалось открыть ссылку: {e}"))
     }
 }

@@ -20,9 +20,10 @@ use sha2::{Digest, Sha256};
 pub const PLATFORM_KEY: &str = "windows-x86_64";
 /// Имя ассета с манифестом.
 pub const MANIFEST_ASSET_NAME: &str = "latest.json";
-/// Открытый ключ подписи (Ed25519, base64). Плейсхолдер = подпись не проверяется
-/// для stable в режиме fail-closed.
-pub const PUBLIC_KEY: &str = "PLACEHOLDER_REPLACE_ME";
+/// Открытый ключ подписи (Ed25519, base64). Сгенерирован
+/// `scripts/gen_keys.py`; закрытая половина — `keys/private.key` (не в git).
+/// Обязан совпадать с `PUBLIC_KEY` в `core/updater.py`.
+pub const PUBLIC_KEY: &str = "P8wubYo5/aYU2V6EhrbMfmmDnUdr5wh70ujfa02yapg=";
 /// Аварийный обход проверки подписи. В продакшене всегда `false`.
 pub const ALLOW_UNSIGNED: bool = false;
 /// Репозиторий релизов.
@@ -655,8 +656,30 @@ mod tests {
     }
 
     #[test]
-    fn version_ordering_matches_pep440_for_releases() {
-        assert!(is_newer("2.0.0", "1.1.0"));
+    fn real_manifest_signature_verifies_with_shipped_key() {
+        // Манифест подписан настоящим scripts/make_manifest.py и ключом из
+        // keys/private.key; проверяется закреплённым PUBLIC_KEY. Тест ловит
+        // расхождение между ключом в core/updater.py и в Rust.
+        let raw = include_str!("../../tests/fixtures/signed_manifest.json");
+        let manifest: serde_json::Value = serde_json::from_str(raw).expect("фикстура");
+        let signature = manifest.get("signature").expect("подпись");
+        let bytes = canonical_manifest_bytes(&manifest).expect("канонизация");
+
+        assert!(has_usable_key(PUBLIC_KEY), "PUBLIC_KEY должен быть реальным ключом");
+        assert!(
+            verify_manifest_signature(&bytes, signature, PUBLIC_KEY),
+            "подпись действительного манифеста не прошла проверку"
+        );
+
+        // Подделка хотя бы одного поля ломает подпись.
+        let mut tampered = manifest.clone();
+        tampered["version"] = serde_json::json!("9.9.9");
+        let tampered_bytes = canonical_manifest_bytes(&tampered).expect("канонизация");
+        assert!(!verify_manifest_signature(&tampered_bytes, signature, PUBLIC_KEY));
+    }
+
+    #[test]
+    fn version_ordering_matches_pep440_for_releases() {        assert!(is_newer("2.0.0", "1.1.0"));
         assert!(is_newer("v1.2.0", "1.1.9"));
         assert!(!is_newer("1.1.0", "1.1.0"));
         assert!(!is_newer("1.0.9", "1.1.0"));

@@ -116,6 +116,22 @@ export interface UpdateInfo {
   channel: string;
 }
 
+/** `SidecarStatus` из `src-tauri/src/tools/sidecar/mod.rs`. */
+export interface SidecarStatus {
+  name: string;
+  path: string | null;
+  source: string;
+  found: boolean;
+}
+
+/** `YtDlpStatus` из `src-tauri/src/tools/ytdlp_update/mod.rs`. */
+export interface YtDlpStatus {
+  current: string | null;
+  latest: string | null;
+  path: string | null;
+  update_available: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Команды (имена совпадают с generate_handler! в lib.rs)
 // ---------------------------------------------------------------------------
@@ -134,6 +150,8 @@ export const commands = {
   hideToTray: (): Promise<void> => invoke<void>("hide_to_tray"),
   showMainWindow: (): Promise<void> => invoke<void>("show_main_window"),
   openLogFile: (): Promise<void> => invoke<void>("open_log_file"),
+  /** Открывает ссылку http/https в браузере по умолчанию. */
+  openUrl: (url: string): Promise<void> => invoke<void>("open_url", { url }),
   /** Предпросмотр ссылки; ошибка приходит строкой на русском. */
   downloadPreview: (url: string): Promise<PreviewInfo> =>
     invoke<PreviewInfo>("download_preview", { url }),
@@ -153,6 +171,12 @@ export const commands = {
   checkUpdates: (): Promise<UpdateInfo | null> => invoke<UpdateInfo | null>("check_updates"),
   /** Скачивает обновление и запускает перезапуск, возвращает job_id. */
   startUpdate: (info: UpdateInfo): Promise<number> => invoke<number>("start_update", { info }),
+  /** Версии yt-dlp: установленная и последняя на GitHub. */
+  ytdlpStatus: (): Promise<YtDlpStatus> => invoke<YtDlpStatus>("ytdlp_status"),
+  /** Найденные программы yt-dlp и ffmpeg с путями и источником. */
+  sidecarsStatus: (): Promise<SidecarStatus[]> => invoke<SidecarStatus[]>("sidecars_status"),
+  /** Обновляет yt-dlp в профиле пользователя, возвращает job_id. */
+  ytdlpUpdate: (): Promise<number> => invoke<number>("ytdlp_update"),
 } as const;
 
 // ---------------------------------------------------------------------------

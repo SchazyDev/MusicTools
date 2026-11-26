@@ -7,3 +7,4 @@
 pub mod convert;
 pub mod download;
 pub mod sidecar;
+pub mod ytdlp_update;

@@ -158,6 +158,16 @@ music_tools.log
 *.part
 *.ytdl
 
+# Сайдкары попадают в установщик из src-tauri/resources (см.
+# scripts/prepare_sidecars.py), но в git их не храним: они весят сотни
+# мегабайт и скачиваются при подготовке сборки.
+src-tauri/resources/*.exe
+
+# Закрытый ключ подписи обновлений не должен попадать в репозиторий никогда.
+keys/private.key
+*.pem
+!.gitignore
+
 # Node / frontend (Tauri build)
 node_modules/
 .npm/

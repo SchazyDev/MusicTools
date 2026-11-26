@@ -40,11 +40,11 @@ from core.settings import allowed_channels  # noqa: E402
 
 # Открытый ключ подписи релизных манифестов (Ed25519, base64).
 #
-# TODO(maintainer): заменить плейсхолдер на реальный ключ, который печатает
-# scripts/gen_keys.py, ДО первого подписанного релиза. Пока здесь плейсхолдер,
-# проверка подписи для канала "stable" работает fail-closed: обновление
-# не предлагается, пока не задан реальный ключ или не выставлен ALLOW_UNSIGNED.
-PUBLIC_KEY = "PLACEHOLDER_REPLACE_ME"
+# Сгенерирован scripts/gen_keys.py --out-dir keys. Закрытая половина лежит
+# в keys/private.key и в репозиторий не попадает (.gitignore). Ключ должен
+# совпадать с PUBLIC_KEY в src-tauri/src/update/mod.rs — иначе обновление
+# работает только в одной из версий.
+PUBLIC_KEY = "P8wubYo5/aYU2V6EhrbMfmmDnUdr5wh70ujfa02yapg="
 
 # Явный аварийный обход проверки подписи. Тесты monkeypatch-ят этот флаг.
 # В продакшене должен оставаться False.

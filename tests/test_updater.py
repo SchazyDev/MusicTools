@@ -109,6 +109,55 @@ def _release_payload(*asset_names):
 
 GOOD_SHA = "a" * 64
 
+# Ключ для тестов подписи: детерминированный seed, чтобы тесты не зависели от
+# содержимого keys/ (закрытый ключ в репозиторий не попадает).
+_TEST_SEED = bytes(range(32))
+
+
+def _test_public_key() -> str:
+    """Открытая половина тестового ключа в base64."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.from_private_bytes(_TEST_SEED)
+    public = key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(public).decode()
+
+
+def _sign_manifest(manifest: dict) -> dict:
+    """Возвращает манифест с корректной Ed25519-подписью тестового ключа."""
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    payload = updater.canonical_manifest_bytes(manifest)
+    signature = Ed25519PrivateKey.from_private_bytes(_TEST_SEED).sign(payload)
+    signed = dict(manifest)
+    signed["signature"] = {
+        "algorithm": "ed25519",
+        "key_id": "test",
+        "value": base64.b64encode(signature).decode(),
+    }
+    return signed
+
+
+@pytest.fixture(autouse=True)
+def _signed_manifests(monkeypatch):
+    """В приложении закреплён настоящий ключ, поэтому тестовые манифесты
+    подписываются тестовым ключом, а проверка берёт его открытую половину."""
+    try:
+        public = _test_public_key()
+    except Exception:  # noqa: BLE001 - без cryptography тесты подписи не работают
+        yield
+        return
+    monkeypatch.setattr(updater, "PUBLIC_KEY", public)
+    yield
+
 
 def _manifest_payload(**overrides):
     manifest = {
@@ -142,7 +191,7 @@ def test_fetch_manifest_valid(monkeypatch):
     _patch_opener(
         monkeypatch,
         _release_payload("latest.json", "MusicTools_setup.exe"),
-        _manifest_payload(),
+        _sign_manifest(_manifest_payload()),
     )
     info = fetch_latest_manifest()
     assert info is not None
@@ -151,6 +200,43 @@ def test_fetch_manifest_valid(monkeypatch):
     assert info.sha256 == GOOD_SHA
     assert info.size == 100
     assert info.channel == "stable"
+
+
+def test_fetch_manifest_unsigned_stable_is_rejected(monkeypatch):
+    """Реальный ключ в приложении: манифест без подписи не принимается."""
+    _patch_opener(
+        monkeypatch,
+        _release_payload("latest.json"),
+        _manifest_payload(),
+    )
+    assert fetch_latest_manifest() is None
+
+
+def test_fetch_manifest_tampered_signature_is_rejected(monkeypatch):
+    signed = _sign_manifest(_manifest_payload())
+    signed["version"] = "9.9.9"
+    _patch_opener(monkeypatch, _release_payload("latest.json"), signed)
+    assert fetch_latest_manifest() is None
+
+
+def test_python_and_rust_share_the_same_public_key():
+    """Ключ в core/updater.py и в Rust-ядре обязан совпадать: иначе
+    подписанный манифест принимается только одной из версий."""
+    import re
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parent.parent / "src-tauri" / "src" / "update" / "mod.rs"
+    text = source.read_text(encoding="utf-8")
+    match = re.search(r'pub const PUBLIC_KEY: &str = "([^"]+)"', text)
+    assert match, "PUBLIC_KEY не найден в src-tauri/src/update/mod.rs"
+
+    # Читаем ключ из самого файла: фикстура подменяет updater.PUBLIC_KEY
+    # тестовым ключом.
+    core = Path(__file__).resolve().parent.parent / "core" / "updater.py"
+    python_text = core.read_text(encoding="utf-8")
+    python_match = re.search(r'^PUBLIC_KEY = "([^"]+)"', python_text, re.MULTILINE)
+    assert python_match, "PUBLIC_KEY не найден в core/updater.py"
+    assert match.group(1) == python_match.group(1)
 
 
 def test_fetch_manifest_missing_asset_returns_none(monkeypatch):

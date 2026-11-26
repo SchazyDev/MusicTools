@@ -458,6 +458,51 @@ fn remove_dir_quietly(dir: &Path) {
 mod tests {
     use super::*;
 
+    /// Сквозная проверка конвертации: реальные файлы через ffmpeg.
+    /// Запуск: `cargo test -- --ignored convert_real_files`.
+    #[test]
+    #[ignore = "запускает ffmpeg, проверяется вручную"]
+    fn convert_real_files() {
+        let source = std::env::temp_dir().join(format!("mt-convert-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&source);
+        fs::create_dir_all(&source).expect("каталог");
+        let clip = source.join("clip.mp3");
+        let sample = fs::read(std::env::var("MUSIC_TOOLS_TEST_SAMPLE").unwrap_or_default())
+            .or_else(|_| fs::read(std::env::temp_dir().join("mt-sample.mp3")));
+        match sample {
+            Ok(bytes) => fs::write(&clip, bytes).expect("копия образца"),
+            Err(_) => panic!("нужен MUSIC_TOOLS_TEST_SAMPLE — путь к mp3"),
+        }
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let (tx, _rx) = tokio::sync::broadcast::channel(64);
+            let ctx = crate::jobs::JobContext::for_test("convert", tx);
+            let outcome = run_job(
+                &ctx,
+                ConvertParams {
+                    files: vec![clip.display().to_string()],
+                    format: ConvertFormat::Wav,
+                    quality: "16".to_owned(),
+                },
+            )
+            .await;
+
+            let dir = match outcome {
+                JobOutcome::Ok { path: Some(dir), .. } => dir,
+                other => panic!("конвертация не удалась: {other:?}"),
+            };
+            let out = Path::new(&dir).join("clip.wav");
+            let size = fs::metadata(&out).expect("результат").len();
+            assert!(size > 10_000, "файл слишком мал: {size}");
+            println!("сконвертировано: {} ({size} байт)", out.display());
+
+            let _ = fs::remove_dir_all(&dir);
+        });
+
+        let _ = fs::remove_dir_all(&source);
+    }
+
     #[test]
     fn accepts_known_extensions_case_insensitively() {
         assert!(is_allowed_extension(Path::new("song.MP3")));

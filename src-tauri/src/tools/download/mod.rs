@@ -948,3 +948,44 @@ async fn copy_with_progress(ctx: &JobContext, source: &Path, target: &Path, tota
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Сквозная проверка на живом сайте: предпросмотр, скачивание mp3,
+    /// проверка контейнера ffprobe-совместимым чтением. Нужен интернет:
+    /// `cargo test -- --ignored download_real_url`.
+    #[test]
+    #[ignore = "обращается к сети, запускается вручную"]
+    fn download_real_url() {
+        let url = std::env::var("MUSIC_TOOLS_TEST_URL")
+            .unwrap_or_else(|_| "https://vimeo.com/76979871".to_owned());
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let info = preview(&url).await.expect("предпросмотр");
+            println!("заголовок: {:?}, высоты: {:?}", info.title, info.heights);
+            assert!(!info.title.trim().is_empty());
+
+            let (tx, _rx) = tokio::sync::broadcast::channel(64);
+            let ctx = crate::jobs::JobContext::for_test("download", tx);
+            let outcome = run_job(
+                &ctx,
+                DownloadParams { url: url.clone(), format: DownloadFormat::Mp3, quality: "192kbps".to_owned() },
+            )
+            .await;
+
+            let path = match outcome {
+                JobOutcome::Ok { path: Some(path), .. } => path,
+                other => panic!("скачивание не удалось: {other:?}"),
+            };
+
+            let file = std::path::Path::new(&path);
+            assert!(file.is_file(), "нет файла {path}");
+            let size = std::fs::metadata(file).expect("метаданные").len();
+            assert!(size > 10_000, "файл слишком мал: {size} байт");
+            println!("скачано: {path} ({size} байт)");
+        });
+    }
+}
+

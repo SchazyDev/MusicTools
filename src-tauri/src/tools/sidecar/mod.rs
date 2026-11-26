@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -75,6 +76,8 @@ pub enum SidecarSource {
     PythonModule,
     /// Отладочный бинарник из корня репозитория (только debug-сборка).
     RepoRoot,
+    /// Обновляемая копия в `%LOCALAPPDATA%\MusicTools\bin`.
+    UserData,
 }
 
 impl SidecarSource {
@@ -85,6 +88,7 @@ impl SidecarSource {
             SidecarSource::Path => "PATH",
             SidecarSource::PythonModule => "python -m yt_dlp (отладочный запуск)",
             SidecarSource::RepoRoot => "корень репозитория (отладочный бинарник)",
+            SidecarSource::UserData => "%LOCALAPPDATA%\\MusicTools\\bin",
         }
     }
 }
@@ -132,6 +136,58 @@ impl ResolvedSidecar {
             }
         }
     }
+
+    /// Сведения о программе для интерфейса.
+    pub fn status(&self) -> SidecarStatus {
+        SidecarStatus {
+            name: self.name.label().to_owned(),
+            path: match &self.program {
+                Program::Executable(path) => Some(path.display().to_string()),
+                Program::PythonModule { python, module } => Some(format!("{python} -m {module}")),
+            },
+            source: self.source.describe().to_owned(),
+            found: true,
+        }
+    }
+}
+
+/// Сведения о найденной (или отсутствующей) программе для вкладки «О программе».
+#[derive(Debug, Clone, Serialize)]
+pub struct SidecarStatus {
+    pub name: String,
+    pub path: Option<String>,
+    pub source: String,
+    pub found: bool,
+}
+
+impl SidecarStatus {
+    /// Описание отсутствующей программы с подсказкой.
+    pub fn missing(name: SidecarName, hint: &'static str) -> Self {
+        Self { name: name.label().to_owned(), path: None, source: hint.to_owned(), found: false }
+    }
+}
+
+/// Сведения о всех сайдкарах в текущем окружении.
+pub fn all_statuses() -> Vec<SidecarStatus> {
+    [SidecarName::YtDlp, SidecarName::Ffmpeg]
+        .into_iter()
+        .map(|name| match resolve(name) {
+            Ok(resolved) => {
+                let status = resolved.status();
+                log::debug!("{}", resolved.describe());
+                status
+            }
+            Err(e) => {
+                log::warn!("{e}");
+                let hint = if cfg!(debug_assertions) {
+                    "не найдена; выполните python scripts/prepare_sidecars.py"
+                } else {
+                    "не найдена; переустановите приложение"
+                };
+                SidecarStatus::missing(name, hint)
+            }
+        })
+        .collect()
 }
 
 /// Ошибка поиска sidecar-программы.
@@ -145,6 +201,9 @@ pub enum SidecarError {
 
 /// Окружение, в котором идёт поиск. В тестах подменяется заглушкой.
 pub trait SidecarEnv {
+    /// Каталог обновляемых программ в профиле пользователя
+    /// (`%LOCALAPPDATA%\MusicTools\bin`).
+    fn user_bin_dir(&self) -> Option<PathBuf>;
     /// Каталог ресурсов установки, если известен.
     fn resource_dir(&self) -> Option<PathBuf>;
     /// Каталог текущего исполняемого файла.
@@ -173,6 +232,14 @@ fn dev_resources_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources")
 }
 
+/// Каталог обновляемых программ в профиле пользователя.
+pub fn user_bin_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.join("MusicTools").join("bin"))
+}
+
 /// Отладочный путь к `ffmpeg.exe` в корне репозитория.
 pub fn dev_repo_ffmpeg() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -197,10 +264,35 @@ const DEV_YTDLP_HINT: &str = "; положите yt-dlp.exe в resources или 
 const DEV_FFMPEG_HINT: &str = "; положите ffmpeg.exe в resources или в корень репозитория";
 const RELEASE_HINT: &str = "";
 
-/// Порядок поиска: каталог ресурсов, каталог приложения, PATH, затем
-/// (только в отладочной сборке) резервы — Python-модуль или корень репозитория.
+/// Старшинство источника: больше — предпочтительнее. Используется, чтобы
+/// выбрать актуальную версию при выводе сведений о программе.
+pub fn source_rank(source: SidecarSource) -> u8 {
+    match source {
+        SidecarSource::UserData => 4,
+        SidecarSource::ResourceDir => 3,
+        SidecarSource::ExeDir => 2,
+        SidecarSource::Path => 1,
+        SidecarSource::PythonModule => 1,
+        SidecarSource::RepoRoot => 0,
+    }
+}
+
+/// Порядок поиска: обновляемая копия в профиле, каталог ресурсов, каталог
+/// приложения, PATH, затем (только в отладочной сборке) резервы — Python-модуль
+/// или корень репозитория.
 pub fn resolve_with<E: SidecarEnv>(env: &E, name: SidecarName) -> Result<ResolvedSidecar, SidecarError> {
     let file_name = name.file_name();
+
+    if let Some(dir) = env.user_bin_dir() {
+        let candidate = dir.join(&file_name);
+        if env.is_file(&candidate) {
+            return Ok(ResolvedSidecar {
+                name,
+                source: SidecarSource::UserData,
+                program: Program::Executable(candidate),
+            });
+        }
+    }
 
     if let Some(dir) = env.resource_dir() {
         let candidate = dir.join(&file_name);
@@ -266,6 +358,10 @@ pub fn resolve_with<E: SidecarEnv>(env: &E, name: SidecarName) -> Result<Resolve
 struct RealEnv;
 
 impl SidecarEnv for RealEnv {
+    fn user_bin_dir(&self) -> Option<PathBuf> {
+        user_bin_dir()
+    }
+
     fn resource_dir(&self) -> Option<PathBuf> {
         // В отладочной сборке каталог ресурсов — `src-tauri/resources`, чтобы
         // поведение совпадало с `resolve_resources_dir` в `lib.rs`.
@@ -275,7 +371,14 @@ impl SidecarEnv for RealEnv {
                 return Some(dev);
             }
         }
-        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.to_owned()))
+        // В релизе сайдкары лежат в `<каталог приложения>\resources`.
+        let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.to_owned()))?;
+        let nested = exe_dir.join("resources");
+        if nested.is_dir() {
+            Some(nested)
+        } else {
+            Some(exe_dir)
+        }
     }
 
     fn exe_dir(&self) -> Option<PathBuf> {
@@ -964,6 +1067,7 @@ mod tests {
     // --- порядок разрешения на поддельной файловой системе ---
 
     struct FakeEnv {
+        user_bin: Option<PathBuf>,
         resources: Option<PathBuf>,
         exe: Option<PathBuf>,
         path: Vec<PathBuf>,
@@ -974,11 +1078,22 @@ mod tests {
 
     impl FakeEnv {
         fn new() -> Self {
-            Self { resources: None, exe: None, path: Vec::new(), files: Vec::new(), python: false, dev: false }
+            Self {
+                user_bin: None,
+                resources: None,
+                exe: None,
+                path: Vec::new(),
+                files: Vec::new(),
+                python: false,
+                dev: false,
+            }
         }
     }
 
     impl SidecarEnv for FakeEnv {
+        fn user_bin_dir(&self) -> Option<PathBuf> {
+            self.user_bin.clone()
+        }
         fn resource_dir(&self) -> Option<PathBuf> {
             self.resources.clone()
         }
@@ -1006,6 +1121,26 @@ mod tests {
                 SidecarName::Ffmpeg => vec![DevFallback::Executable(SidecarSource::RepoRoot, p("repo-ffmpeg.exe"))],
             }
         }
+    }
+
+    #[test]
+    fn resolution_prefers_user_bin() {
+        let mut env = FakeEnv::new();
+        let user = PathBuf::from(r"C:\Users\u\AppData\Local\MusicTools\bin");
+        let resources = PathBuf::from(r"C:\res");
+        env.user_bin = Some(user.clone());
+        env.resources = Some(resources.clone());
+        env.exe = Some(PathBuf::from(r"C:\app"));
+        let name = SidecarName::YtDlp.file_name();
+        env.files = vec![
+            user.join(&name),
+            resources.join(&name),
+            PathBuf::from(r"C:\app").join(&name),
+        ];
+        let got = resolve_with(&env, SidecarName::YtDlp).expect("найдено");
+        assert_eq!(got.source, SidecarSource::UserData);
+        assert_eq!(got.program, Program::Executable(user.join(&name)));
+        assert!(source_rank(SidecarSource::UserData) > source_rank(SidecarSource::ResourceDir));
     }
 
     #[test]

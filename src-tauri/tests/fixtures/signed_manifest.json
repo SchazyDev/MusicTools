@@ -1,0 +1,17 @@
+{
+  "version": "2.0.1",
+  "channel": "stable",
+  "notes": "",
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://github.com/SchazyDev/MusicTools/releases/download/v2.0.1/MusicTools.exe",
+      "sha256": "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5",
+      "size": 7
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "6f47074eea6acecf",
+    "value": "tuXjnGMwYjdyFMKcJZ/ehEWYa5A1VUUIMYPj7dM5valGuBB3XIbHYewWTCTnnsyQiMINkHLD0KDBEMqwfg4qBw=="
+  }
+}

@@ -1,7 +1,12 @@
-//! Логирование в файл рядом с исполняемым файлом.
+//! Логирование в файл в профиле пользователя.
 //!
 //! Совместимо с PyQt-версией: имя `music_tools.log`, ротация при превышении
 //! размера, уровень из `MUSIC_TOOLS_LOG_LEVEL` (по умолчанию `info`).
+//!
+//! В установленной задачей `currentUser` программе каталог установки можно
+//! защитить от обычного пользователя, поэтому журнал и настройки живут в
+//! `%APPDATA%\MusicTools`. В отладочной сборке журнал кладётся рядом с exe,
+//! чтобы его было удобно читать из `target/debug`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -14,12 +19,15 @@ const LOG_FILE_NAME: &str = "music_tools.log";
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ROTATED: u32 = 3;
 
-/// Каталог логов: каталог исполняемого файла.
+/// Каталог логов: профиль пользователя, в отладочной сборке — рядом с exe.
 pub fn log_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_owned))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    if cfg!(debug_assertions) {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_owned))
+        {
+            return dir;
+        }
+    }
+    crate::settings::settings_dir()
 }
 
 fn rotate(dir: &Path, file: &Path) {

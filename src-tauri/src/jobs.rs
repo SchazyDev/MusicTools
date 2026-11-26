@@ -207,6 +207,15 @@ impl JobContext {
     fn cancel_for_test(&self) {
         self.cancel.cancel();
     }
+
+    /// Контекст без реестра: для тестов, которые проверяют само тело задания.
+    #[cfg(test)]
+    pub fn for_test(
+        kind: &str,
+        tx: broadcast::Sender<JobEventEnvelope>,
+    ) -> Self {
+        JobContext { job_id: 1, kind: kind.to_owned(), tx, cancel: CancelToken::default() }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

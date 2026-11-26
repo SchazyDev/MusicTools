@@ -23,7 +23,12 @@ use tauri::Manager;
 use crate::jobs::JobRegistry;
 use crate::state::AppState;
 
-/// Каталог ресурсов: `src-tauri/resources` в dev, каталог установки в релизе.
+/// Каталог ресурсов: `src-tauri/resources` в dev, `<каталог установки>\resources`
+/// в релизе.
+///
+/// `resource_dir()` из Tauri здесь не используется: без установщика (запуск exe
+/// из произвольного каталога) он возвращает каталог самого exe, а сайдкары
+/// всегда лежат в подкаталоге `resources`. Проверяем оба варианта.
 fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
     if cfg!(debug_assertions) {
         let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
@@ -31,12 +36,28 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             return dev;
         }
     }
-    app.path().resource_dir().unwrap_or_else(|_| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|p| p.to_owned()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-    })
+
+    let candidates: Vec<std::path::PathBuf> =
+        [app.path().resource_dir().ok(), std::env::current_exe().ok().and_then(|exe| exe.parent().map(|p| p.to_owned()))]
+            .into_iter()
+            .flatten()
+            .collect();
+
+    for dir in &candidates {
+        let nested = dir.join("resources");
+        if nested.join("yt-dlp.exe").is_file() || nested.join("ffmpeg.exe").is_file() {
+            return nested;
+        }
+        if dir.join("yt-dlp.exe").is_file() || dir.join("ffmpeg.exe").is_file() {
+            return dir.clone();
+        }
+    }
+
+    candidates
+        .into_iter()
+        .next()
+        .map(|dir| dir.join("resources"))
+        .unwrap_or_else(|| std::path::PathBuf::from("resources"))
 }
 
   #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -56,6 +77,21 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             app.manage(AppState::new(resources_dir, log_path.clone(), version.clone(), jobs));
 
             tray::install(app.handle())?;
+
+            // Диагностика окружения: какие сайдкары найдены. Помогает при
+            // разборе жалоб «инструмент не работает» по журналу.
+            for status in crate::tools::sidecar::all_statuses() {
+                if status.found {
+                    log::info!(
+                        "программа {}: {} ({})",
+                        status.name,
+                        status.path.as_deref().unwrap_or("?"),
+                        status.source
+                    );
+                } else {
+                    log::warn!("программа {}: {}", status.name, status.source);
+                }
+            }
 
             if let Some(window) = app.get_webview_window("main") {
                 tray::install_close_handler(&window);
@@ -115,9 +151,13 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             commands::save_convert_result,
             commands::check_updates,
             commands::start_update,
+            commands::sidecars_status,
+            commands::ytdlp_status,
+            commands::ytdlp_update,
             commands::hide_to_tray,
             commands::show_main_window,
             commands::open_log_file,
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска приложения Music Tools");
