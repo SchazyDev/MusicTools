@@ -168,6 +168,11 @@ keys/private.key
 *.pem
 !.gitignore
 
+# Сайдкары и тяжёлые бинарники в корне: их готовит scripts/prepare_sidecars.py.
+/ffmpeg.exe
+/ffprobe.exe
+/yt-dlp.exe
+
 # Node / frontend (Tauri build)
 node_modules/
 .npm/
