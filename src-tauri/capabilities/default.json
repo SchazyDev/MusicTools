@@ -12,6 +12,7 @@
     "core:event:default",
     "core:app:allow-version",
     "core:app:allow-name",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "dialog:allow-open"
   ]
 }

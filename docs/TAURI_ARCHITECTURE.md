@@ -289,10 +289,12 @@ pub struct ToolDescriptor {
 | `download_preview` | `url: string` | `PreviewInfo` | заголовок, миниатюра, доступные высоты |
 | `download_start` | `params: DownloadParams` | `number` | запуск скачивания, возвращает `job_id` |
 | `save_result` | `sourcePath`, `destinationPath` | `number` | копирование результата с защитой от перезаписи |
+| `convert_start` | `params: ConvertParams` | `number` | конвертация очереди файлов |
+| `save_convert_result` | `sourceDir`, `destinationDir` | `number` | копирование готовых файлов в папку |
 
 Команды фазы 1 и 2 (повторяют Python-код и появятся со своими заданиями):
-`start_convert`, `pick_files`, `pick_folder`, `list_input_files`. Все они
-возвращают либо данные, либо `job_id`, подчиняясь тем же соглашениям.
+`pick_files`, `pick_folder`, `list_input_files`. Все они возвращают либо
+данные, либо `job_id`, подчиняясь тем же соглашениям.
 
 Событие `job://event` — единственный канал заданий:
 

@@ -175,6 +175,44 @@ pub async fn save_result(
 }
 
 // ---------------------------------------------------------------------------
+// Конвертация
+// ---------------------------------------------------------------------------
+
+/// Запускает конвертацию очереди файлов, возвращает `job_id`.
+#[tauri::command]
+pub async fn convert_start(
+    state: State<'_, AppState>,
+    params: crate::tools::convert::ConvertParams,
+) -> IpcResult<u64> {
+    let id = state.jobs.spawn("convert", move |ctx| {
+        Box::pin(async move { crate::tools::convert::run_job(&ctx, params).await })
+    });
+    Ok(id)
+}
+
+/// Копирует готовые файлы в выбранную папку, возвращает `job_id`.
+#[tauri::command]
+pub async fn save_convert_result(
+    state: State<'_, AppState>,
+    source_dir: String,
+    destination_dir: String,
+) -> IpcResult<u64> {
+    let source = std::path::PathBuf::from(source_dir);
+    let id = state.jobs.spawn("convert_save", move |ctx| {
+        Box::pin(async move {
+            match crate::tools::convert::save_results(&ctx, &source, &destination_dir).await {
+                Ok(dir) => {
+                    JobOutcome::ok_with_path(format!("Файлы сохранены: {dir}"), dir)
+                }
+                Err(JobError::Cancelled) => JobOutcome::Canceled,
+                Err(JobError::Failed(message)) => JobOutcome::failed(message),
+            }
+        })
+    });
+    Ok(id)
+}
+
+// ---------------------------------------------------------------------------
 // Окно и трей
 // ---------------------------------------------------------------------------
 

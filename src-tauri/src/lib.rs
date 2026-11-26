@@ -72,6 +72,8 @@ fn resolve_resources_dir(app: &tauri::App) -> std::path::PathBuf {
             commands::download_preview,
             commands::download_start,
             commands::save_result,
+            commands::convert_start,
+            commands::save_convert_result,
             commands::hide_to_tray,
             commands::show_main_window,
             commands::open_log_file,
