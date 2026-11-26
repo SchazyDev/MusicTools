@@ -1,94 +1,151 @@
 # Сборка Music Tools
 
-Документ описывает подготовку окружения, локальный запуск, сборку исполняемого
-файла и установщика, а также запуск тестов.
+Документ описывает подготовку окружения, локальный запуск, сборку
+исполняемого файла и установщика, а также запуск тестов.
+
+Основное приложение — Tauri 2 (Rust) плюс интерфейс на Svelte. PyQt-версия
+заморожена на 1.1.0 и собирается только для критических исправлений
+(ветка `legacy/pyqt`).
 
 ## Требования
 
 - Windows 10 или Windows 11, x64.
-- Python 3.13 (проверено на 3.13.14).
-- Git с поддержкой Git LFS.
+- Node.js 20 или новее и npm.
+- Rust через [rustup](https://rustup.rs) (устойчивый канал, edition 2021).
+- Microsoft C++ Build Tools: MSVC и Windows SDK.
+- WebView2 Runtime — в Windows 11 он есть, в Windows 10 ставится
+  автоматически или берётся из установщика (`webviewInstallerMode` в
+  `tauri.conf.json`).
+- Python 3.13 — только для скриптов подготовки (`prepare_sidecars.py`,
+  `make_manifest.py`) и тестов Python-ветки.
 
-Файл `ffmpeg.exe` (около 142 МБ) хранится через Git LFS. Перед сборкой обязательно
-выполните:
+Git LFS не нужен: тяжёлые бинарники в репозитории не хранятся.
 
-```powershell
-git lfs install
-git lfs pull
-```
+## Сайдкары
 
-Если пропустить эти шаги, вместо настоящего бинарника в рабочей копии окажется
-текстовый указатель LFS, и собранное приложение не сможет конвертировать файлы.
-
-Inno Setup (утилита `iscc`) нужен только для сборки установщика.
-
-## Виртуальное окружение
+`yt-dlp.exe` и `ffmpeg.exe` в git не попадают (`.gitignore`) и
+подготавливаются скриптом:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+python scripts/prepare_sidecars.py            # скачать yt-dlp, скопировать ffmpeg
+python scripts/prepare_sidecars.py --check    # только проверить
+python scripts/prepare_sidecars.py --force    # перезаписать
 ```
 
-`requirements-dev.txt` подключает `requirements.txt` и добавляет pytest,
-PyInstaller и необязательные линтеры ruff и black.
+`yt-dlp.exe` скачивается с последнего выпуска GitHub. `ffmpeg.exe`
+копируется из корня репозитория или из `PATH`; если его там нет, положите
+`ffmpeg.exe` в корень проекта или установите ffmpeg через
+`winget install Gyan.FFmpeg`.
+
+Файлы кладутся в `src-tauri/resources` и попадают в установщик
+(`bundle.resources`). Сборка отказывается собирать установщик без них:
+`beforeBuildCommand` запускает `npm run sidecars:check`.
+
+## Окружение
+
+```powershell
+npm ci
+npm install -g @tauri-apps/cli   # необязательно: CLI уже в devDependencies
+```
+
+CLI из `devDependencies` вызывается через `npx tauri`, поэтому глобальная
+установка не обязательна.
 
 ## Локальный запуск
 
 ```powershell
-python main.py
+npm run tauri dev
 ```
 
-## Сборка исполняемого файла
-
-```powershell
-pyinstaller main.spec
-```
-
-Результат: `dist/main.exe` (onefile, без консольного окна, UPX отключён).
-Каталоги `build/` и `dist/` исключены из системы контроля версий.
+В отладочной сборке каталог ресурсов — `src-tauri/resources`, поэтому
+сайдкары находятся без установки. Журнал пишется рядом с exe в
+`src-tauri/target/debug`, уровень меняется переменной
+`MUSIC_TOOLS_LOG_LEVEL` (`debug`, `info`, `warn`).
 
 ## Сборка установщика
 
-Установщик использует готовый `dist/main.exe`, поэтому сначала выполните сборку
-выше, затем:
-
 ```powershell
-iscc installer.iss
+python scripts/prepare_sidecars.py
+npm run tauri build
 ```
 
-Готовый `MusicTools_v1_0_0_setup.exe` появится в каталоге, указанном в параметре
-`OutputDir` файла `installer.iss`. Версия в `installer.iss` должна совпадать с
-версией из `utils/constants.py` и `pyproject.toml`.
+Результат:
 
-## Подпись манифеста обновления
+- `src-tauri/target/release/music-tools.exe` — исполняемый файл;
+- `src-tauri/target/release/bundle/nsis/Music Tools_<версия>_x64-setup.exe`;
+- `src-tauri/target/release/bundle/msi/Music Tools_<версия>_x64_<язык>.msi`.
 
-Манифест `latest.json` подписывается ключом Ed25519 (пакет `cryptography`).
-Проверка подписи работает fail-closed для канала `stable`: пока в
-`core/updater.py` стоит плейсхолдер `PUBLIC_KEY`, неподписанный или
-непроверяемый манифест не будет предложен пользователям.
+Установщик ставит приложение в профиль пользователя (`currentUser`) и не
+требует прав администратора.
 
-- `python scripts/gen_keys.py --out-dir keys` — генерация пары ключей
-  (`keys/private.key` и `keys/public.key`), печатает строку `PUBLIC_KEY`
-  для вставки в `core/updater.py`. Приватный ключ храните в секретах CI.
-- `python scripts/make_manifest.py --key keys/private.key ...` — подписать
-  манифест; `--verify latest.json --public-key keys/public.key` — проверить.
+Сборка без установщика (быстрее, для проверки):
 
-Полный порядок выпуска с подписью описан в `docs/RELEASE.md`.
+```powershell
+npm run tauri build -- --no-bundle
+```
 
 ## Тесты
 
 ```powershell
-pytest
+npm run check                      # svelte-check: типы интерфейса
+cargo test --manifest-path src-tauri/Cargo.toml
+python -m pytest -q                # Python-ветка (совместимость, скрипты)
 ```
 
-Конфигурация pytest находится в `pyproject.toml`. Тест
-`tests/test_version_sync.py` падает, если версия разошлась между
-`utils/constants.py`, `pyproject.toml` и `installer.iss`.
+Часть тестов Rust помечена `#[ignore]` и обращается к настоящему окружению
+или сети. Они запускаются вручную:
 
-## Известное ограничение
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml -- --ignored
+```
 
-`ffmpeg.exe` весит около 142 МБ и хранится в Git LFS. Из-за этого клонирование
-репозитория без LFS даёт непригодное окружение, а размер релизного артефакта
-заметно больше, чем у приложения без встроенного ffmpeg.
+- `resolves_real_environment` — находит ли `yt-dlp` и `ffmpeg`;
+- `updates_real_binary` — скачивает yt-dlp с GitHub и ставит в
+  `%LOCALAPPDATA%\MusicTools\bin`;
+- `download_real_url` — предпросмотр и скачивание mp3; адрес задаётся
+  переменной `MUSIC_TOOLS_TEST_URL`, по умолчанию Vimeo (нужен интернет,
+  некоторые сайты требуют входа);
+- `convert_real_files` — конвертация в wav; нужен mp3 по пути из
+  `MUSIC_TOOLS_TEST_SAMPLE`.
+
+## Подпись обновлений
+
+Пара ключей Ed25519 создаётся один раз:
+
+```powershell
+python scripts/gen_keys.py --out-dir keys
+```
+
+- `keys/public.key` — коммитится и вставляется в `PUBLIC_KEY` в
+  `core/updater.py` и `src-tauri/src/update/mod.rs` (тест
+  `test_python_and_rust_share_the_same_public_key` следит за совпадением);
+- `keys/private.key` — **никогда не коммитится**, он в `.gitignore`.
+  Храните резервную копию отдельно: без него выпускать обновления нельзя.
+
+Манифест для релиза:
+
+```powershell
+python scripts/make_manifest.py --version 2.0.1 `
+    --file "src-tauri/target/release/bundle/nsis/Music Tools_2.0.1_x64-setup.exe" `
+    --url https://github.com/SchazyDev/MusicTools/releases/download/v2.0.1/Music-Tools_2.0.1_x64-setup.exe `
+    --key keys/private.key --channel stable --out latest.json
+python scripts/make_manifest.py --verify latest.json --public-key keys/public.key
+```
+
+`latest.json` загружается в релиз GitHub как отдельный ассет. Проверка
+подписи для канала `stable` работает fail-closed: манифест без подписи или
+с неверной подписью отклоняется.
+
+## Python-ветка (заморожена)
+
+Сборка PyQt-версии нужна только для исправлений ветки `legacy/pyqt`:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+python main.py
+pyinstaller main.spec
+```
+
+Inno Setup (`iscc`) нужен только для установщика PyQt-версии.
