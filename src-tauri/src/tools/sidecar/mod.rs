@@ -17,7 +17,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
@@ -529,6 +529,12 @@ impl CommandSpec {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // Python-сайдкар в режиме разработки (`python -m yt_dlp`) должен писать
+        // UTF-8, иначе кириллица уходит в системной кодировке. Замороженный
+        // `yt-dlp.exe` эти переменные игнорирует — его вывод разбирает
+        // [`decode_output`], который понимает и cp1251.
+        cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+
         if let Some(dir) = &self.cwd {
             cmd.current_dir(dir);
         }
@@ -607,22 +613,95 @@ pub fn format_tool_error(tool: &str, status: Option<i32>, tail: &StderrTail) -> 
     format!("{tool} завершился с кодом {code}: {text}")
 }
 
-async fn pump<R>(reader: R, is_stderr: bool, tx: mpsc::UnboundedSender<Line>)
+/// Символы Windows-1251 для байтов `0x80..=0xBF` (индекс — `байт - 0x80`).
+/// Байты `0xC0..=0xFF` — подряд идущие `А`..`я` и считаются арифметикой.
+const CP1251_HIGH: [char; 64] = [
+    'Ђ', 'Ѓ', '‚', 'ѓ', '„', '…', '†', '‡', '€', '‰', 'Љ', '‹', 'Њ', 'Ќ', 'Ћ', 'Џ', 'ђ', '‘',
+    '’', '“', '”', '•', '–', '—', '\u{FFFD}', '™', 'љ', '›', 'њ', 'ќ', 'ћ', 'џ', '\u{A0}', 'Ў',
+    'ў', 'Ј', '¤', 'Ґ', '¦', '§', 'Ё', '©', 'Є', '«', '¬', '\u{AD}', '®', 'Ї', '°', '±', 'І', 'і',
+    'ґ', 'µ', '¶', '·', 'ё', '№', 'є', '»', 'ј', 'Ѕ', 'ѕ', 'ї',
+];
+
+/// Декодирует байты Windows-1251. Байт `0x98` в этой кодировке не определён.
+fn decode_windows_1251(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        match byte {
+            0x00..=0x7F => out.push(byte as char),
+            0x80..=0xBF => out.push(CP1251_HIGH[usize::from(byte - 0x80)]),
+            _ => out.push(
+                char::from_u32(0x0410 + u32::from(byte - 0xC0)).unwrap_or('\u{FFFD}'),
+            ),
+        }
+    }
+    out
+}
+
+/// Декодирует вывод процесса: UTF-8, а при ошибке — Windows-1251.
+///
+/// Замороженный `yt-dlp.exe` (PyInstaller) печатает обычные сообщения в
+/// системной кодировке, даже когда `PYTHONUTF8=1`. Раньше чтение падало на
+/// первом русском названии, pipe закрывался, и yt-dlp завершался с
+/// `[Errno 22] Invalid argument` и кодом 120.
+pub fn decode_output(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => decode_windows_1251(bytes),
+    }
+}
+
+/// То же для одной строки: срезает завершающий `\r`.
+pub fn decode_output_line(bytes: &[u8]) -> String {
+    decode_output(bytes.strip_suffix(b"\r").unwrap_or(bytes))
+}
+
+/// Предел незавершённой строки: `ffmpeg` пишет прогресс через `\r`, и без
+/// такого предела буфер рос бы на весь фильм.
+const MAX_PENDING_LINE: usize = 64 * 1024;
+
+/// Забирает из буфера завершённые строки (разделитель — `\n`).
+fn take_lines(pending: &mut Vec<u8>) -> Vec<String> {
+    let mut lines = Vec::new();
+    while let Some(position) = pending.iter().position(|byte| *byte == b'\n') {
+        let raw: Vec<u8> = pending.drain(..=position).collect();
+        lines.push(decode_output_line(&raw[..raw.len() - 1]));
+    }
+    if pending.len() > MAX_PENDING_LINE {
+        lines.push(decode_output_line(pending));
+        pending.clear();
+    }
+    lines
+}
+
+/// Читает поток кусками и отдаёт строки. Ошибки декодирования больше не
+/// останавливают чтение: иначе дочерний процесс теряет stdout и падает.
+async fn pump<R>(mut reader: R, is_stderr: bool, tx: mpsc::UnboundedSender<Line>)
 where
     R: AsyncRead + Unpin,
 {
-    let mut lines = BufReader::new(reader).lines();
+    let mut buffer = vec![0u8; 8192];
+    let mut pending: Vec<u8> = Vec::new();
+
     loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                let item = if is_stderr { Line::Stderr(line) } else { Line::Stdout(line) };
-                if tx.send(item).is_err() {
-                    break;
-                }
-            }
-            Ok(None) => break,
+        let read = match reader.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(read) => read,
             Err(_) => break,
+        };
+        pending.extend_from_slice(&buffer[..read]);
+
+        for text in take_lines(&mut pending) {
+            let item = if is_stderr { Line::Stderr(text) } else { Line::Stdout(text) };
+            if tx.send(item).is_err() {
+                return;
+            }
         }
+    }
+
+    if !pending.is_empty() {
+        let text = decode_output_line(&pending);
+        let item = if is_stderr { Line::Stderr(text) } else { Line::Stdout(text) };
+        let _ = tx.send(item);
     }
 }
 
@@ -1227,6 +1306,35 @@ mod tests {
         let std_cmd = cmd.as_std();
         assert_eq!(std_cmd.get_program(), "ffmpeg");
         assert!(std_cmd.get_args().eq(["-i", "a", "b", "-y"]));
+    }
+
+    #[test]
+    fn decodes_cp1251_title_from_ytdlp() {
+        // «Прямой эфир» в Windows-1251 — так yt-dlp.exe печатает название.
+        let bytes = [0xCF, 0xF0, 0xFF, 0xEC, 0xEE, 0xE9, b' ', 0xFD, 0xF4, 0xE8, 0xF0];
+        assert_eq!(decode_output_line(&bytes), "Прямой эфир");
+    }
+
+    #[test]
+    fn keeps_utf8_and_ascii_output() {
+        assert_eq!(decode_output_line("Прямой эфир".as_bytes()), "Прямой эфир");
+        assert_eq!(decode_output_line(b"[download] Destination: C:\\tmp\\a.mp4\r"), "[download] Destination: C:\\tmp\\a.mp4");
+        assert_eq!(decode_output_line(&[]), "");
+    }
+
+    #[test]
+    fn take_lines_splits_and_keeps_remainder() {
+        let mut pending = b"one\r\ntwo\nthree".to_vec();
+        assert_eq!(take_lines(&mut pending), vec!["one".to_owned(), "two".to_owned()]);
+        assert_eq!(pending, b"three");
+    }
+
+    #[test]
+    fn take_lines_does_not_grow_forever() {
+        let mut pending = vec![b'x'; MAX_PENDING_LINE + 1];
+        let lines = take_lines(&mut pending);
+        assert_eq!(lines.len(), 1);
+        assert!(pending.is_empty());
     }
 
     /// Проверка на живой машине: запускается вручную с `--ignored`.

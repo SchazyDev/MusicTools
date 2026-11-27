@@ -474,14 +474,13 @@ pub async fn preview(url: &str) -> JobResult<PreviewInfo> {
     let stderr = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        let text = String::from_utf8_lossy(&stderr);
-        let tail = tail_from(&text, STDERR_TAIL_LINES);
+        let tail = tail_from(&sidecar::decode_output(&stderr), STDERR_TAIL_LINES);
         let message = format_tool_error("yt-dlp", status.code(), &tail);
         log::error!("предпросмотр не удался: {message}");
         return Err(JobError::Failed(format!("Не удалось получить сведения о ролике: {message}")));
     }
 
-    let json: serde_json::Value = serde_json::from_slice(&stdout)
+    let json: serde_json::Value = serde_json::from_str(&sidecar::decode_output(&stdout))
         .map_err(|e| JobError::Failed(format!("Не удалось разобрать ответ yt-dlp: {e}")))?;
     Ok(preview_from_json(&json))
 }
@@ -952,15 +951,15 @@ async fn copy_with_progress(ctx: &JobContext, source: &Path, target: &Path, tota
 mod tests {
     use super::*;
 
-    /// Сквозная проверка на живом сайте: предпросмотр, скачивание mp3,
-    /// проверка контейнера ffprobe-совместимым чтением. Нужен интернет:
-    /// `cargo test -- --ignored download_real_url`.
-    #[test]
-    #[ignore = "обращается к сети, запускается вручную"]
-    fn download_real_url() {
-        let url = std::env::var("MUSIC_TOOLS_TEST_URL")
-            .unwrap_or_else(|_| "https://vimeo.com/76979871".to_owned());
+    fn test_url() -> String {
+        std::env::var("MUSIC_TOOLS_TEST_URL")
+            .unwrap_or_else(|_| "https://vimeo.com/76979871".to_owned())
+    }
 
+    /// Сквозная проверка на живом сайте: предпросмотр и скачивание.
+    /// Нужен интернет: `cargo test -- --ignored download_real`.
+    fn download_real(format: DownloadFormat, quality: &str) -> String {
+        let url = test_url();
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
             let info = preview(&url).await.expect("предпросмотр");
@@ -971,7 +970,7 @@ mod tests {
             let ctx = crate::jobs::JobContext::for_test("download", tx);
             let outcome = run_job(
                 &ctx,
-                DownloadParams { url: url.clone(), format: DownloadFormat::Mp3, quality: "192kbps".to_owned() },
+                DownloadParams { url: url.clone(), format, quality: quality.to_owned() },
             )
             .await;
 
@@ -984,8 +983,27 @@ mod tests {
             assert!(file.is_file(), "нет файла {path}");
             let size = std::fs::metadata(file).expect("метаданные").len();
             assert!(size > 10_000, "файл слишком мал: {size} байт");
+            assert_eq!(
+                file.extension().and_then(|e| e.to_str()),
+                Some(format.code()),
+                "неверное расширение результата"
+            );
             println!("скачано: {path} ({size} байт)");
-        });
+            path
+        })
+    }
+
+    #[test]
+    #[ignore = "обращается к сети, запускается вручную"]
+    fn download_real_url() {
+        download_real(DownloadFormat::Mp3, "192kbps");
+    }
+
+    /// Отдельно проверяет mp4: склейка `bestvideo+bestaudio` через ffmpeg.
+    #[test]
+    #[ignore = "обращается к сети, запускается вручную"]
+    fn download_real_url_mp4() {
+        download_real(DownloadFormat::Mp4, "720p");
     }
 }
 
