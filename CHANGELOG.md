@@ -5,7 +5,7 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии следуют [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [2.0.0] - 2026-11-28
 
 ### Добавлено
 
@@ -144,6 +144,7 @@
 - Автозапуск вместе с Windows.
 - Автообновление через GitHub Releases.
 
-[Unreleased]: https://github.com/SchazyDev/MusicTools/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/SchazyDev/MusicTools/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/SchazyDev/MusicTools/releases/tag/v2.0.0
 [1.1.0]: https://github.com/SchazyDev/MusicTools/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SchazyDev/MusicTools/releases/tag/v1.0.0
